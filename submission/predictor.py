@@ -152,6 +152,9 @@ class ImmuneStatePredictor:
         print(f"\n2. Auto-detecting features for dataset: {dataset_name}")
         self._detect_feature_paths(dataset_name)
         
+        # 2.5 Detect dataset type (synthetic vs experimental)
+        self.dataset_type = self._detect_dataset_type(train_dir_path)
+        
         # 3. Phase 1: ESM Grid Search (if ESM features available)
         if self.esm_path is not None:
             print("\n3. Running ESM Grid Search...")
@@ -272,6 +275,42 @@ class ImmuneStatePredictor:
             print(f"  ESM aggregates directory does not exist: {agg_dir}")
             if self.auto_generate_esm:
                 print(f"  Will create directory and generate ESM features")
+    
+    def _detect_dataset_type(self, train_dir_path):
+        """Detect if dataset is synthetic or experimental based on sequence count variability.
+        
+        Returns:
+            str: 'synthetic' if repertoires have uniform sequence counts (CV < 0.05),
+                 'experimental' if repertoires have varying sequence counts (CV >= 0.05)
+        """
+        print("\n  Detecting dataset type (synthetic vs experimental)...")
+        
+        seq_counts = []
+        files = [f for f in os.listdir(train_dir_path) if f.endswith('.tsv')]
+        
+        # Sample up to 50 repertoires for analysis
+        for file in files[:50]:
+            try:
+                fpath = os.path.join(train_dir_path, file)
+                df = pd.read_csv(fpath, sep='\t')
+                seq_counts.append(len(df))
+            except:
+                continue
+        
+        if not seq_counts:
+            print("    Warning: Could not analyze sequence counts, defaulting to experimental")
+            return 'experimental'
+        
+        mean_count = np.mean(seq_counts)
+        std_count = np.std(seq_counts)
+        cv = std_count / mean_count if mean_count > 0 else 0
+        
+        dataset_type = 'synthetic' if cv < 0.05 else 'experimental'
+        
+        print(f"    Sequence counts: mean={mean_count:.0f}, std={std_count:.0f}, CV={cv:.4f}")
+        print(f"    Dataset Type: {dataset_type.upper()}")
+        
+        return dataset_type
     
     def _get_ml_model(self, model_name):
         """Returns the ML classifier configuration."""
@@ -576,7 +615,7 @@ class ImmuneStatePredictor:
         self.meta_model = LogisticRegression(
             penalty=None, 
             solver='lbfgs', 
-            random_state=self.seed,
+            random_state=self.seed, 
             max_iter=1000,
             tol=1e-6
         )
@@ -604,43 +643,76 @@ class ImmuneStatePredictor:
         for i, name in enumerate(model_names):
             print(f"    {name}: {individual_aucs[i]:.5f}")
         
-        # Select model based on method
-        if self.model_selection_method == 'weights':
-            max_idx = np.argmax(np.abs(norm_w))
-            print(f"\n  Selection Method: Weights")
-            print(f"  Selected Model: {model_names[max_idx]} (weight={np.abs(norm_w[max_idx]):.2f}, CV AUC={individual_aucs[max_idx]:.5f})")
-        elif self.model_selection_method == 'hybrid':
-            # Check if any model has weight > 0.5
-            max_weight_idx = np.argmax(np.abs(norm_w))
-            max_weight = np.abs(norm_w[max_weight_idx])
+        # Select ensemble strategy based on dataset type
+        if self.dataset_type == 'synthetic':
+            # SYNTHETIC: Use hybrid single-model selection
+            print(f"\n  Dataset Type: SYNTHETIC - Using Hybrid Selection")
             
-            if max_weight > 0.5:
-                # Strong consensus - use weight-based selection
-                max_idx = max_weight_idx
-                print(f"\n  Selection Method: Hybrid (Weight > 0.5 threshold)")
-                print(f"  Selected Model: {model_names[max_idx]} (weight={max_weight:.2f}, CV AUC={individual_aucs[max_idx]:.5f})")
-            else:
-                # No strong consensus - fall back to CV
+            if self.model_selection_method == 'weights':
+                max_idx = np.argmax(np.abs(norm_w))
+                print(f"  Selection Method: Weights")
+                print(f"  Selected Model: {model_names[max_idx]} (weight={np.abs(norm_w[max_idx]):.2f}, CV AUC={individual_aucs[max_idx]:.5f})")
+            elif self.model_selection_method == 'hybrid':
+                # Check if any model has weight > 0.5
+                max_weight_idx = np.argmax(np.abs(norm_w))
+                max_weight = np.abs(norm_w[max_weight_idx])
+                
+                if max_weight > 0.5:
+                    # Strong consensus - use weight-based selection
+                    max_idx = max_weight_idx
+                    print(f"  Selection Method: Hybrid (Weight > 0.5 threshold)")
+                    print(f"  Selected Model: {model_names[max_idx]} (weight={max_weight:.2f}, CV AUC={individual_aucs[max_idx]:.5f})")
+                else:
+                    # No strong consensus - fall back to CV
+                    max_idx = np.argmax(individual_aucs)
+                    print(f"  Selection Method: Hybrid (No weight > 0.5, using CV)")
+                    print(f"  Selected Model: {model_names[max_idx]} (CV AUC={individual_aucs[max_idx]:.5f}, weight={np.abs(norm_w[max_idx]):.2f})")
+            else:  # 'cv'
                 max_idx = np.argmax(individual_aucs)
-                print(f"\n  Selection Method: Hybrid (No weight > 0.5, using CV)")
-                print(f"  Selected Model: {model_names[max_idx]} (CV AUC={individual_aucs[max_idx]:.5f}, weight={np.abs(norm_w[max_idx]):.2f})")
-        else:  # 'cv'
-            max_idx = np.argmax(individual_aucs)
-            print(f"\n  Selection Method: CV AUC")
-            print(f"  Selected Model: {model_names[max_idx]} (CV AUC={individual_aucs[max_idx]:.5f})")
+                print(f"  Selection Method: CV AUC")
+                print(f"  Selected Model: {model_names[max_idx]} (CV AUC={individual_aucs[max_idx]:.5f})")
+            
+            # Set simplified weights (only selected model gets 1.0)
+            simplified_weights = np.zeros(n_models)
+            simplified_weights[max_idx] = 1.0
+            
+            print(f"  Final Weights: {model_names[0]}={simplified_weights[0]:.2f}, {model_names[1]}={simplified_weights[1]:.2f}", end="")
+            if X_esm is not None:
+                print(f", {model_names[2]}={simplified_weights[2]:.2f}")
+            else:
+                print()
         
-        # Set simplified weights (only selected model gets 1.0)
-        simplified_weights = np.zeros(n_models)
-        simplified_weights[max_idx] = 1.0
+        else:
+            # EXPERIMENTAL: Use weighted ensemble with positive weights only
+            print(f"\n  Dataset Type: EXPERIMENTAL - Using Weighted Ensemble")
+            
+            # Filter out models with negative weights
+            positive_mask = weights > 0
+            
+            if not np.any(positive_mask):
+                print("  Warning: All weights are negative, using absolute values")
+                positive_mask = np.ones(n_models, dtype=bool)
+            
+            # Normalize positive weights to sum to 1
+            simplified_weights = np.zeros(n_models)
+            positive_weights = np.abs(weights[positive_mask])
+            simplified_weights[positive_mask] = positive_weights / positive_weights.sum()
+            
+            print(f"  Filtered Models (positive weights only):")
+            for i, name in enumerate(model_names):
+                if simplified_weights[i] > 0:
+                    print(f"    {name}: weight={simplified_weights[i]:.3f}, CV AUC={individual_aucs[i]:.5f}")
+                else:
+                    print(f"    {name}: EXCLUDED (negative weight={norm_w[i]:.3f})")
+            
+            print(f"  Final Ensemble Weights: {model_names[0]}={simplified_weights[0]:.3f}, {model_names[1]}={simplified_weights[1]:.3f}", end="")
+            if X_esm is not None:
+                print(f", {model_names[2]}={simplified_weights[2]:.3f}")
+            else:
+                print()
         
         # Store simplified weights for prediction
         self.simplified_weights = simplified_weights
-        
-        print(f"  Final Weights: {model_names[0]}={simplified_weights[0]:.2f}, {model_names[1]}={simplified_weights[1]:.2f}", end="")
-        if X_esm is not None:
-            print(f", {model_names[2]}={simplified_weights[2]:.2f}")
-        else:
-            print()
         
         self.train_ids = ids_array
 
