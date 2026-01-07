@@ -117,6 +117,7 @@ class ImmuneStatePredictor:
         # Configuration
         self.seed = 42
         self.n_folds = 5
+        self.model_selection_method = kwargs.get('model_selection_method', 'hybrid')  # 'cv', 'weights', or 'hybrid'
 
     def fit(self, train_dir_path: str):
         """
@@ -592,6 +593,55 @@ class ImmuneStatePredictor:
         else:
             print()
         
+        # Compute individual CV AUCs for each model
+        model_names = ['K-mer', 'Public', 'ESM'] if X_esm is not None else ['K-mer', 'Public']
+        individual_aucs = []
+        for i in range(n_models):
+            auc = roc_auc_score(y, oof_preds[:, i])
+            individual_aucs.append(auc)
+        
+        print(f"\n  Individual Model CV AUCs:")
+        for i, name in enumerate(model_names):
+            print(f"    {name}: {individual_aucs[i]:.5f}")
+        
+        # Select model based on method
+        if self.model_selection_method == 'weights':
+            max_idx = np.argmax(np.abs(norm_w))
+            print(f"\n  Selection Method: Weights")
+            print(f"  Selected Model: {model_names[max_idx]} (weight={np.abs(norm_w[max_idx]):.2f}, CV AUC={individual_aucs[max_idx]:.5f})")
+        elif self.model_selection_method == 'hybrid':
+            # Check if any model has weight > 0.5
+            max_weight_idx = np.argmax(np.abs(norm_w))
+            max_weight = np.abs(norm_w[max_weight_idx])
+            
+            if max_weight > 0.5:
+                # Strong consensus - use weight-based selection
+                max_idx = max_weight_idx
+                print(f"\n  Selection Method: Hybrid (Weight > 0.5 threshold)")
+                print(f"  Selected Model: {model_names[max_idx]} (weight={max_weight:.2f}, CV AUC={individual_aucs[max_idx]:.5f})")
+            else:
+                # No strong consensus - fall back to CV
+                max_idx = np.argmax(individual_aucs)
+                print(f"\n  Selection Method: Hybrid (No weight > 0.5, using CV)")
+                print(f"  Selected Model: {model_names[max_idx]} (CV AUC={individual_aucs[max_idx]:.5f}, weight={np.abs(norm_w[max_idx]):.2f})")
+        else:  # 'cv'
+            max_idx = np.argmax(individual_aucs)
+            print(f"\n  Selection Method: CV AUC")
+            print(f"  Selected Model: {model_names[max_idx]} (CV AUC={individual_aucs[max_idx]:.5f})")
+        
+        # Set simplified weights (only selected model gets 1.0)
+        simplified_weights = np.zeros(n_models)
+        simplified_weights[max_idx] = 1.0
+        
+        # Store simplified weights for prediction
+        self.simplified_weights = simplified_weights
+        
+        print(f"  Final Weights: {model_names[0]}={simplified_weights[0]:.2f}, {model_names[1]}={simplified_weights[1]:.2f}", end="")
+        if X_esm is not None:
+            print(f", {model_names[2]}={simplified_weights[2]:.2f}")
+        else:
+            print()
+        
         self.train_ids = ids_array
 
     def predict_proba(self, test_dir_path: str) -> pd.DataFrame:
@@ -644,8 +694,8 @@ class ImmuneStatePredictor:
         else:
             stacked_preds = np.column_stack([pred_kmer, pred_public])
         
-        # Meta-model final prediction
-        probabilities = self.meta_model.predict_proba(stacked_preds)[:, 1]
+        # Use simplified weights (max weight only) instead of meta-model ensemble
+        probabilities = np.dot(stacked_preds, self.simplified_weights)
         
         # Format output
         predictions_df = pd.DataFrame({
