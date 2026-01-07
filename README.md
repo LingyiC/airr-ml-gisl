@@ -90,8 +90,42 @@ predictor = ImmuneStatePredictor(
     out_dir='/custom/output/',
     kmer_path='/custom/kmer/features.pkl',
     esm_path='/custom/esm/aggregates/',
-    auto_generate_esm=True  # Enable ESM feature generation
+    auto_generate_esm=True,  # Enable ESM feature generation
+    model_selection_method='hybrid'  # 'cv', 'weights', or 'hybrid' (default)
 )
+```
+
+### Model Selection Strategies
+
+The predictor supports three strategies for selecting which single model to use from the ensemble:
+
+1. **`hybrid` (default)**: Intelligent adaptive selection
+   - If any model has weight > 0.5: Uses weight-based selection (strong consensus)
+   - If all weights ≤ 0.5: Falls back to CV-based selection (no consensus)
+   - **Recommended for most use cases**
+
+2. **`cv`**: Always selects the model with highest individual cross-validation AUC
+   - Best for scenarios where standalone model performance is most important
+   - Ignores ensemble complementarity
+
+3. **`weights`**: Always selects the model with highest meta-learner weight
+   - Best when you trust the ensemble learning to identify the best contributor
+   - May select a model with lower individual CV but better complementarity
+
+#### Selection Examples
+
+**Example 1: Strong consensus (hybrid uses weights)**
+```
+Model Weights: K-mer=0.72, Public=0.01, ESM=0.27
+Selection Method: Hybrid (Weight > 0.5 threshold)
+Selected Model: K-mer (weight=0.72, CV AUC=0.68500)
+```
+
+**Example 2: No consensus (hybrid uses CV)**
+```
+Model Weights: K-mer=0.04, Public=0.47, ESM=0.49
+Selection Method: Hybrid (No weight > 0.5, using CV)
+Selected Model: Public (CV AUC=0.71234, weight=0.47)
 ```
 
 ## Usage
@@ -124,11 +158,12 @@ When `auto_generate_esm=True` is set in the predictor initialization, the system
 ```python
 from submission.predictor import ImmuneStatePredictor
 
-# Initialize
+# Initialize with default hybrid selection
 predictor = ImmuneStatePredictor(
     n_jobs=4, 
     device='cpu',
-    out_dir='/path/to/output/'
+    out_dir='/path/to/output/',
+    model_selection_method='hybrid'  # default, can also be 'cv' or 'weights'
 )
 
 # Train
@@ -139,6 +174,27 @@ predictions_df = predictor.predict_proba('/path/to/test_dataset_X')
 
 # Get important sequences
 important_seqs = predictor.important_sequences_
+```
+
+#### Using Different Selection Methods
+
+```python
+# Force CV-based selection
+predictor_cv = ImmuneStatePredictor(
+    model_selection_method='cv',
+    out_dir='/path/to/output/'
+)
+
+# Force weight-based selection
+predictor_weights = ImmuneStatePredictor(
+    model_selection_method='weights',
+    out_dir='/path/to/output/'
+)
+
+# Use hybrid (default - no need to specify)
+predictor_hybrid = ImmuneStatePredictor(
+    out_dir='/path/to/output/'
+)
 ```
 
 ## Key Features
@@ -157,6 +213,10 @@ important_seqs = predictor.important_sequences_
   - **ML Classifiers**: ExtraTrees (300 trees, depth=6) vs SVM (linear kernel)
   - Selects best variant/classifier combination via 5-fold CV
 - **Meta-Learner**: Logistic regression combining base model predictions via stacking
+- **Model Selection**: After meta-learning, selects a single model to use:
+  - **Hybrid (default)**: Weight-based if any weight > 0.5, otherwise CV-based
+  - Computes individual CV AUCs for all models
+  - Final predictions use only the selected model (weight=1.0, others=0.0)
 
 ### Reproducibility
 - Fixed random seeds for all operations
@@ -275,6 +335,7 @@ pip install -r requirements.txt
 3. **Interface**: Added standard `fit()` and `predict_proba()` methods
 4. **Flexibility**: Handles missing features gracefully
 5. **Output**: Formatted according to challenge requirements
+6. **Model Selection**: Hybrid strategy that intelligently selects single best model from ensemble
 
 ## Model Parameters
 
