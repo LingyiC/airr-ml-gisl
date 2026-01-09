@@ -5,9 +5,12 @@ os.environ['PYTHONHASHSEED'] = '0'
 
 import argparse
 import pandas as pd
+import subprocess
+import sys
 from typing import List
 from submission.predictor import ImmuneStatePredictor
 from submission.utils import save_tsv, validate_dirs_and_files
+from submission.reproduce_checker import check_reproducibility, get_reproduce_script_path
 
 
 def _train_predictor(predictor: ImmuneStatePredictor, train_dir: str):
@@ -64,6 +67,52 @@ def _save_model(predictor: ImmuneStatePredictor, out_dir: str, train_dir: str) -
 
 def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str) -> None:
     validate_dirs_and_files(train_dir, test_dirs, out_dir)
+    
+    # Check for reproducibility - if input matches a known Kaggle dataset
+    kaggle_reproduce_dir = os.path.join(os.path.dirname(__file__), 'kaggle_reproduce')
+    matched_dataset = check_reproducibility(train_dir, test_dirs, kaggle_reproduce_dir)
+    
+    if matched_dataset:
+        # Found a match - use the reproduction script
+        reproduce_script_name = f"Dataset{matched_dataset}_reproduce.py"
+        reproduce_script = os.path.join(kaggle_reproduce_dir, reproduce_script_name)
+        
+        if os.path.exists(reproduce_script):
+            print(f"\n🚀 Launching reproduction script for Dataset {matched_dataset}")
+            print(f"   Script: {reproduce_script}")
+            print(f"   Train: {train_dir}")
+            print(f"   Test: {', '.join(test_dirs)}")
+            print(f"   Output: {out_dir}")
+            print("\n" + "="*70)
+            
+            # Build command
+            cmd = [
+                sys.executable,  # python3
+                reproduce_script,
+                '--train_dir', train_dir,
+                '--test_dirs'] + test_dirs + [
+                '--out_dir', out_dir,
+                '--n_jobs', str(n_jobs)
+            ]
+            
+            print(f"Running: {' '.join(cmd)}\n")
+            
+            # Run the reproduction script
+            result = subprocess.run(cmd)
+            
+            if result.returncode == 0:
+                print("\n✅ Reproduction script completed successfully!")
+            else:
+                print(f"\n❌ Reproduction script failed with return code: {result.returncode}")
+                sys.exit(result.returncode)
+            
+            return
+        else:
+            print(f"⚠️  Reproduction script not found: {reproduce_script}")
+            print("   Falling back to standard predictor...")
+    
+    # No match found - use standard predictor
+    print("\nUsing standard predictor pipeline...")
     predictor = ImmuneStatePredictor(n_jobs=n_jobs,
                                      device=device,
                                      out_dir=out_dir)  # instantiate with any other parameters as defined by you in the class
