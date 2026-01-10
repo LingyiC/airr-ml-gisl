@@ -118,6 +118,7 @@ class ImmuneStatePredictor:
         self.seed = 42
         self.n_folds = 5
         self.model_selection_method = kwargs.get('model_selection_method', 'hybrid')  # 'cv', 'weights', or 'hybrid'
+        self.rank_topseq = kwargs.get('rank_topseq', True)  # Whether to rank important sequences
 
     def fit(self, train_dir_path: str):
         """
@@ -217,12 +218,16 @@ class ImmuneStatePredictor:
         print("\n6. Training Ensemble Models...")
         self._train_ensemble(X_kmer, seqs_dict, X_esm, y, esm_ids if X_esm is not None else np.array(master_labels.index))
         
-        # 7. Identify important sequences
-        print("\n7. Identifying important sequences...")
-        self.important_sequences_ = self.identify_associated_sequences(
-            top_k=50000, 
-            dataset_name=dataset_name
-        )
+        # 7. Identify important sequences (conditional)
+        if self.rank_topseq:
+            print("\n7. Identifying important sequences...")
+            self.important_sequences_ = self.identify_associated_sequences(
+                top_k=50000, 
+                dataset_name=dataset_name
+            )
+        else:
+            print("\n7. Skipping important sequences identification (rank_topseq disabled)")
+            self.important_sequences_ = None
         
         print("\n" + "="*60)
         print("Training Complete!")

@@ -53,7 +53,8 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
     """Saves important sequences to a TSV file."""
     seqs = predictor.important_sequences_
     if seqs is None or seqs.empty:
-        raise ValueError("No important sequences available to save")
+        print(f"Skipping important sequences (not generated or --topseq disabled)")
+        return
 
     seqs_path = os.path.join(out_dir, f"{os.path.basename(train_dir)}_important_sequences.tsv")
     save_tsv(seqs, seqs_path)
@@ -331,7 +332,7 @@ def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str
     print(f"\n✅ Feature generation complete for {dataset_name}\n")
 
 
-def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str) -> None:
+def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True) -> None:
     validate_dirs_and_files(train_dir, test_dirs, out_dir)
     
     # Ensure representations and aggregations exist for all datasets
@@ -373,6 +374,10 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
                 '--n_jobs', str(n_jobs)
             ]
             
+            # Add topseq flag if disabled
+            if not topseq:
+                cmd.append('--no-topseq')
+            
             print(f"Running: {' '.join(cmd)}\n")
             
             # Run the reproduction script
@@ -393,7 +398,8 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
     print("\nUsing standard predictor pipeline...")
     predictor = ImmuneStatePredictor(n_jobs=n_jobs,
                                      device=device,
-                                     out_dir=out_dir)  # instantiate with any other parameters as defined by you in the class
+                                     out_dir=out_dir,
+                                     rank_topseq=topseq)  # instantiate with any other parameters as defined by you in the class
     _train_predictor(predictor, train_dir)
     predictions = _generate_predictions(predictor, test_dirs)
     _save_predictions(predictions, out_dir, train_dir)
@@ -410,8 +416,10 @@ def run():
                         help="Number of CPU cores to use. Use -1 for all available cores.")
     parser.add_argument("--device", type=str, default='cpu', choices=['cpu', 'cuda'],
                         help="Device to use for computation ('cpu' or 'cuda').")
+    parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
+                        help="Disable ranking of important sequences (faster training)")
     args = parser.parse_args()
-    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device)
+    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq)
 
 
 if __name__ == "__main__":

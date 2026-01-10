@@ -40,6 +40,10 @@ parser.add_argument("--test_dirs", required=True,
                     help="Path to test data directory")
 parser.add_argument("--out_dir", required=True,
                     help="Path to output directory")
+parser.add_argument("--n_jobs", type=int, default=1,
+                    help="Number of CPU cores to use (for compatibility)")
+parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
+                    help="Disable ranking of important sequences (faster training)")
 
 args = parser.parse_args()
 
@@ -965,7 +969,7 @@ class ImmuneStatePredictor:
     Immune state predictor using combined k-mer encoding (3-mers + 4-mers).
     """
 
-    def __init__(self, k_list=[3, 4], min_kmer_count=2, n_jobs=1, device='cpu', **kwargs):
+    def __init__(self, k_list=[3, 4], min_kmer_count=2, n_jobs=1, device='cpu', rank_topseq: bool = True, **kwargs):
         """
         Initializes the predictor.
 
@@ -974,10 +978,12 @@ class ImmuneStatePredictor:
             min_kmer_count: Minimum count threshold for k-mers (memory optimization)
             n_jobs: Number of CPU cores to use
             device: Device for computation ('cpu' or 'cuda')
+            rank_topseq: If True, ranks important sequences; if False, skips ranking (default: True)
         """
         self.k_list = k_list
         self.min_kmer_count = min_kmer_count
         self.train_ids_ = None
+        self.rank_topseq = rank_topseq
         total_cores = os.cpu_count()
         if n_jobs == -1:
             self.n_jobs = total_cores
@@ -1029,10 +1035,14 @@ class ImmuneStatePredictor:
         self.train_ids_ = train_ids
 
         # Identify important sequences
-        self.important_sequences_ = self.identify_associated_sequences(
-            train_dir_path=train_dir_path, 
-            top_k=50000  # Updated to 50k for submission
-        )
+        if self.rank_topseq:
+            self.important_sequences_ = self.identify_associated_sequences(
+                train_dir_path=train_dir_path, 
+                top_k=50000  # Updated to 50k for submission
+            )
+        else:
+            print("[Training] Skipping important sequence ranking (--no-topseq)")
+            self.important_sequences_ = None
 
         print("[Training] Training complete.")
         return self
@@ -1167,7 +1177,8 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
     """Saves important sequences to a TSV file."""
     seqs = predictor.important_sequences_
     if seqs is None or seqs.empty:
-        raise ValueError("No important sequences available to save")
+        print(f"Skipping important sequences (not generated or --no-topseq was used)")
+        return
 
     seqs_path = os.path.join(out_dir, f"{os.path.basename(train_dir)}_important_sequences.tsv")
     save_tsv(seqs, seqs_path)
@@ -1175,7 +1186,7 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
 
 
 def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, 
-         k_list: List[int] = [3, 4], min_kmer_count: int = 2, save_model: bool = True) -> None:
+         k_list: List[int] = [3, 4], min_kmer_count: int = 2, save_model: bool = True, rank_topseq: bool = True) -> None:
     """Main pipeline for training and prediction."""
 
     # LC: Changed here to use the updated class
@@ -1183,7 +1194,8 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
         k_list=k_list,
         min_kmer_count=min_kmer_count,
         n_jobs=n_jobs,
-        device=device
+        device=device,
+        rank_topseq=rank_topseq
     )
     _train_predictor(predictor, train_dir)
     
@@ -1212,7 +1224,8 @@ try:
         device="cpu",  # GPU does not help much here
         k_list=K_MERS,
         min_kmer_count=MIN_KMER_COUNT,
-        save_model=True  # Save the trained model
+        save_model=True,  # Save the trained model
+        rank_topseq=args.topseq
     )
     print(f"\nDataset completed successfully.")
     

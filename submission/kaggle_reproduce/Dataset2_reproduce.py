@@ -600,7 +600,7 @@ class ImmuneStatePredictor:
 
     # MODIFIED: Added specific_kmers to __init__
     def __init__(self, k_list: List[int] = [3, 4], min_kmer_count: int = 2, 
-                 specific_kmers: Set[str] = set(), n_jobs: int = 1, device: str = 'cpu', **kwargs):
+                 specific_kmers: Set[str] = set(), n_jobs: int = 1, device: str = 'cpu', rank_topseq: bool = True, **kwargs):
         """
         Initializes the predictor.
 
@@ -610,11 +610,13 @@ class ImmuneStatePredictor:
             specific_kmers: A set of k-mers to explicitly include as features.
             n_jobs: Number of CPU cores to use
             device: Device for computation ('cpu' or 'cuda')
+            rank_topseq: If True, ranks important sequences; if False, skips ranking (default: True)
         """
         self.k_list = k_list
         self.min_kmer_count = min_kmer_count
         self.specific_kmers = specific_kmers # New attribute
         self.train_ids_ = None
+        self.rank_topseq = rank_topseq
         total_cores = os.cpu_count()
         if n_jobs == -1:
             self.n_jobs = total_cores
@@ -670,10 +672,14 @@ class ImmuneStatePredictor:
         self.train_ids_ = train_ids
 
         # Identify important sequences
-        self.important_sequences_ = self.identify_associated_sequences(
-            train_dir_path=train_dir_path, 
-            top_k=50000  # Updated to 50k for submission
-        )
+        if self.rank_topseq:
+            self.important_sequences_ = self.identify_associated_sequences(
+                train_dir_path=train_dir_path, 
+                top_k=50000  # Updated to 50k for submission
+            )
+        else:
+            print("[Training] Skipping important sequence ranking (--no-topseq)")
+            self.important_sequences_ = None
 
         print("[Training] Training complete.")
         # MemoryMonitor.log_memory("After training") # Assuming MemoryMonitor is defined elsewhere
@@ -814,7 +820,8 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
     """Saves important sequences to a TSV file."""
     seqs = predictor.important_sequences_
     if seqs is None or seqs.empty:
-        raise ValueError("No important sequences available to save")
+        print(f"Skipping important sequences (not generated or --no-topseq was used)")
+        return
 
     seqs_path = os.path.join(out_dir, f"{os.path.basename(train_dir)}_important_sequences.tsv")
     save_tsv(seqs, seqs_path)
@@ -823,7 +830,7 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
 
 def run_reproduce_prediction(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, 
          k_list: List[int] = [3, 4], min_kmer_count: int = 2, specific_kmers: Set[str] = set(), 
-         save_model: bool = True) -> None:
+         save_model: bool = True, rank_topseq: bool = True) -> None:
     """Main pipeline for training and prediction."""
 
     predictor = ImmuneStatePredictor(
@@ -831,7 +838,8 @@ def run_reproduce_prediction(train_dir: str, test_dirs: List[str], out_dir: str,
         min_kmer_count=min_kmer_count,
         specific_kmers=specific_kmers, 
         n_jobs=n_jobs,
-        device=device
+        device=device,
+        rank_topseq=rank_topseq
     )
     _train_predictor(predictor, train_dir)
     
@@ -873,6 +881,8 @@ def main():
                        help="Path to output directory")
     parser.add_argument("--n_jobs", type=int, default=1,
                        help="Number of CPU cores to use (for compatibility, not used in this version)")
+    parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
+                       help="Disable ranking of important sequences (faster training)")
 
     args = parser.parse_args()
     
@@ -932,7 +942,8 @@ def main():
             k_list=K_MERS,
             specific_kmers=SPECIFIC_5_MERS,
             min_kmer_count=MIN_KMER_COUNT,
-            save_model=True
+            save_model=True,
+            rank_topseq=args.topseq
         )
         print(f"\nDataset completed successfully.")
 
