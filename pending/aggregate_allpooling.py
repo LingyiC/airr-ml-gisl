@@ -14,10 +14,10 @@ DATASET_NUM = "8_1"
 DATASET_TYPE = "test"  # Change to "train" or "test"
 
 # Choose which BERT pooling methods to extract: ["cls", "mean", "max"] or any subset
-BERT_POOLING_METHODS = ["cls", "mean", "max"]  # Will process all methods in this list
+BERT_POOLING_METHODS = ["mean", "max"]  # Will process all methods in this list
 
 # Choose which row pooling methods to use: ["mean", "max", "sum"] or any subset
-ROW_POOLING_METHODS = ["mean", "max", "sum"]  # Will process all methods in this list
+ROW_POOLING_METHODS = ["mean", "max", "std", "mean_std"]  # Will process all methods in this list
 
 # Base paths
 if DATASET_TYPE == "train":
@@ -57,7 +57,9 @@ def apply_pooling(embeddings, method):
     elif method == "min":
         return embeddings.min(axis=0)
     elif method == "sum":
-        return embeddings.sum(axis=0)
+        return embeddings.sum(axis=0),
+    elif method == "std":
+        return np.std(embeddings, axis=0)
     elif method == "mean_std":
         return np.concatenate([embeddings.mean(axis=0),
                                embeddings.std(axis=0)])
