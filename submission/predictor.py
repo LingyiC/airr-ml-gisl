@@ -71,13 +71,14 @@ class ImmuneStatePredictor:
     Ensemble predictor combining K-mer features, Public Clones, and ESM2 embeddings.
     """
 
-    def __init__(self, n_jobs: int = 1, device: str = 'cpu', **kwargs):
+    def __init__(self, n_jobs: int = 1, device: str = 'cpu', use_esm: bool = True, **kwargs):
         """
         Initializes the predictor.
 
         Args:
             n_jobs (int): Number of CPU cores to use for parallel processing.
             device (str): The device to use for computation (e.g., 'cpu', 'cuda').
+            use_esm (bool): Whether to use ESM features (default: True). Set to False to skip ESM model entirely.
             **kwargs: Additional hyperparameters for the model.
         """
         total_cores = os.cpu_count()
@@ -86,6 +87,7 @@ class ImmuneStatePredictor:
         else:
             self.n_jobs = min(n_jobs, total_cores)
         self.device = device
+        self.use_esm = use_esm
         
         # Model components
         self.kmer_model = None
@@ -116,7 +118,7 @@ class ImmuneStatePredictor:
         
         # Configuration
         self.seed = 42
-        self.n_folds = 2
+        self.n_folds = 5
         self.model_selection_method = kwargs.get('model_selection_method', 'hybrid')  # 'cv', 'weights', or 'hybrid'
         self.rank_topseq = kwargs.get('rank_topseq', True)  # Whether to rank important sequences
 
@@ -156,8 +158,8 @@ class ImmuneStatePredictor:
         # 2.5 Detect dataset type (synthetic vs experimental)
         self.dataset_type = self._detect_dataset_type(train_dir_path)
         
-        # 3. Phase 1: ESM Grid Search (if ESM features available)
-        if self.esm_path is not None:
+        # 3. Phase 1: ESM Grid Search (if ESM features available and use_esm=True)
+        if self.use_esm and self.esm_path is not None:
             print("\n3. Running ESM Grid Search...")
             best_config = self._run_esm_grid_search(master_labels, dataset_name)
             if best_config is not None:
@@ -172,8 +174,8 @@ class ImmuneStatePredictor:
                 X_esm = None
                 y = master_labels.values
         else:
-            # Check if auto-generation is enabled
-            if self.auto_generate_esm:
+            # Check if auto-generation is enabled and ESM is not disabled
+            if self.use_esm and self.auto_generate_esm:
                 print("\n3. ESM features not found - attempting to generate...")
                 success = self._generate_esm_features(train_dir_path, is_test=False)
                 if success:
@@ -200,8 +202,11 @@ class ImmuneStatePredictor:
                     X_esm = None
                     y = master_labels.values
             else:
-                print("\n3. Skipping ESM Grid Search (no ESM features found)")
-                print("   Note: Set auto_generate_esm=True to auto-generate ESM features")
+                if not self.use_esm:
+                    print("\n3. Skipping ESM Grid Search (use_esm=False)")
+                else:
+                    print("\n3. Skipping ESM Grid Search (no ESM features found)")
+                    print("   Note: Set auto_generate_esm=True to auto-generate ESM features")
                 esm_ids = master_labels.index
                 X_esm = None
                 y = master_labels.values
@@ -264,7 +269,11 @@ class ImmuneStatePredictor:
             if self.auto_generate_esm:
                 print(f"  Will generate K-mer features for {dataset_name}")
         
-        # ESM path - look for aggregated features
+        # ESM path - look for aggregated features (only if use_esm=True)
+        if not self.use_esm:
+            print(f"  Skipping ESM feature detection (use_esm=False)")
+            return
+        
         agg_dir = os.path.join(self.out_dir, "aggregates")
         if os.path.exists(agg_dir):
             # Try to find any aggregated ESM files for this dataset

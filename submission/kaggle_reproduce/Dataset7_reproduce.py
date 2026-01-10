@@ -408,14 +408,16 @@ def run_reproduce_prediction(train_dir: str,
             
             # Auto-detect feature paths if not provided
             if kmer_path is None:
-                kmer_dir = os.path.join(out_dir, "kmer")
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                kmer_dir = os.path.join(script_dir, "kmer")
                 kmer_pattern = os.path.join(kmer_dir, f"*{dataset_name}*.pkl")
                 kmer_files = glob.glob(kmer_pattern)
                 if kmer_files:
                     kmer_path = kmer_files[0]
             
             if esm_path is None:
-                esm_path = os.path.join(out_dir, "aggregates")
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                esm_path = os.path.join(script_dir, "aggregates")
             
             # Generate predictions on test sets
             print("\n[2/2] Generating Predictions on Test Sets...")
@@ -543,14 +545,16 @@ def run_reproduce_prediction(train_dir: str,
             
             # Auto-detect feature paths if not provided
             if kmer_path is None:
-                kmer_dir = os.path.join(out_dir, "kmer")
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                kmer_dir = os.path.join(script_dir, "kmer")
                 kmer_pattern = os.path.join(kmer_dir, f"*{dataset_name}*.pkl")
                 kmer_files = glob.glob(kmer_pattern)
                 if kmer_files:
                     kmer_path = kmer_files[0]
             
             if esm_path is None:
-                esm_path = os.path.join(out_dir, "aggregates")
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                esm_path = os.path.join(script_dir, "aggregates")
             
             # Generate predictions on test sets
             print("\n[2/2] Generating Predictions on Test Sets...")
@@ -677,7 +681,8 @@ def run_reproduce_prediction(train_dir: str,
     if not use_saved_model:
         # Auto-detect feature paths if not provided
         if kmer_path is None:
-            kmer_dir = os.path.join(out_dir, "kmer")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            kmer_dir = os.path.join(script_dir, "kmer")
             kmer_pattern = os.path.join(kmer_dir, f"*{dataset_name}*.pkl")
             kmer_files = glob.glob(kmer_pattern)
             if kmer_files:
@@ -685,7 +690,8 @@ def run_reproduce_prediction(train_dir: str,
                 print(f"K-mer Path: {kmer_path}")
         
         if esm_path is None:
-            esm_path = os.path.join(out_dir, "aggregates")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            esm_path = os.path.join(script_dir, "aggregates")
             if os.path.exists(esm_path):
                 print(f"ESM Path: {esm_path}")
         
@@ -967,8 +973,8 @@ Model Components:
     - Meta Model: Logistic Regression stacking
 
 Features Required:
-    - K-mer features: {out_dir}/kmer/*train_dataset_7*.pkl
-    - ESM features: {out_dir}/aggregates/aggregated_esm2_t6_8M_*/esm2_train_dataset_7_*.pkl
+    - K-mer features: kaggle_reproduce/kmer/*train_dataset_7*.pkl
+    - ESM features: kaggle_reproduce/aggregates/aggregated_esm2_t6_8M_*/esm2_train_dataset_7_*.pkl
     """
     )
     

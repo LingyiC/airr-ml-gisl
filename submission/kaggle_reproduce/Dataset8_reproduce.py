@@ -31,8 +31,8 @@ SEED = 42
 TOP_K_KMERS = 5000 
 
 # Paths will be constructed from --out_dir parameter
-# ESM: {out_dir}/aggregates
-# K-mer: {out_dir}/kmer
+# ESM: kaggle_reproduce/aggregates
+# K-mer: kaggle_reproduce/kmer
 
 # ==============================================================================
 # PUBLIC CLONE MODEL
@@ -222,11 +222,13 @@ def run_reproduce_prediction(train_dir: str,
         DataFrame with predictions
     """
     
-    # Construct paths from out_dir if not explicitly provided
+    # Construct paths from script directory if not explicitly provided
     if esm_base_path is None:
-        esm_base_path = os.path.join(out_dir, "aggregates")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        esm_base_path = os.path.join(script_dir, "aggregates")
     if kmer_base_path is None:
-        kmer_base_path = os.path.join(out_dir, "kmer")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        kmer_base_path = os.path.join(script_dir, "kmer")
     
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -529,8 +531,8 @@ Example usage:
         
 Configuration:
     Feature paths are automatically constructed from --out_dir:
-        ESM features: {out_dir}/aggregates
-        K-mer features: {out_dir}/kmer
+        ESM features: kaggle_reproduce/aggregates
+        K-mer features: kaggle_reproduce/kmer
     
     You can override with --esm_base_path and --kmer_base_path if needed
     """
@@ -545,9 +547,9 @@ Configuration:
     parser.add_argument("--n_jobs", type=int, default=1,
                        help="Number of CPU cores to use (for compatibility, not used in this version)")
     parser.add_argument("--esm_base_path", type=str, default=None,
-                       help="Base path to ESM features (default: {out_dir}/aggregates)")
+                       help="Base path to ESM features (default: kaggle_reproduce/aggregates)")
     parser.add_argument("--kmer_base_path", type=str, default=None,
-                       help="Base path to K-mer features (default: {out_dir}/kmer)")
+                       help="Base path to K-mer features (default: kaggle_reproduce/kmer)")
     
     args = parser.parse_args()
     

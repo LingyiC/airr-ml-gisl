@@ -283,9 +283,18 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
         print(f"✅ Successfully removed {removed_count} files")
 
 
-def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str) -> None:
+def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str, use_esm: bool = True) -> None:
     """Ensure representations and aggregations exist for a dataset."""
     dataset_name = os.path.basename(data_dir)
+    
+    # Step 0: Ensure k-mer features exist
+    print(f"\n📊 Step 0: Checking k-mer features for {dataset_name}...")
+    ensure_kmer_features_exist(data_dir, dataset_type, out_dir)
+    
+    # Skip ESM if disabled
+    if not use_esm:
+        print(f"✅ K-mer features ready. Skipping ESM (--no-esm flag set)")
+        return
     
     # Setup config with the correct output directory
     rep_config = RepresentationConfig()
@@ -332,7 +341,7 @@ def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str
     print(f"\n✅ Feature generation complete for {dataset_name}\n")
 
 
-def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True) -> None:
+def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True, use_esm: bool = True) -> None:
     validate_dirs_and_files(train_dir, test_dirs, out_dir)
     
     # Ensure representations and aggregations exist for all datasets
@@ -341,11 +350,11 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
     print("="*70)
     
     # Check train dataset
-    _ensure_representations_exist(train_dir, "train", out_dir)
+    _ensure_representations_exist(train_dir, "train", out_dir, use_esm)
     
     # Check test datasets
     for test_dir in test_dirs:
-        _ensure_representations_exist(test_dir, "test", out_dir)
+        _ensure_representations_exist(test_dir, "test", out_dir, use_esm)
     
     # Check for reproducibility - if input matches a known Kaggle dataset
     if use_reproduce:
@@ -403,6 +412,7 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
     predictor = ImmuneStatePredictor(n_jobs=n_jobs,
                                      device=device,
                                      out_dir=out_dir,
+                                     use_esm=use_esm,
                                      rank_topseq=topseq)  # instantiate with any other parameters as defined by you in the class
     _train_predictor(predictor, train_dir)
     predictions = _generate_predictions(predictor, test_dirs)
@@ -422,10 +432,12 @@ def run():
                         help="Device to use for computation ('cpu' or 'cuda').")
     parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
                         help="Disable ranking of important sequences (faster training)")
+    parser.add_argument("--no-esm", dest='use_esm', action='store_false', default=True,
+                        help="Disable ESM features (skip ESM generation and usage, faster training)")
     parser.add_argument("--no-reproduce", dest='use_reproduce', action='store_false', default=True,
-                        help="Skip checking for kaggle reproduce scripts and always retrain")
+                        help="Skip checking for kaggle reproduce scripts and always retrain)")
     args = parser.parse_args()
-    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce)
+    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce, args.use_esm)
 
 
 if __name__ == "__main__":
