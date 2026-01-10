@@ -334,6 +334,12 @@ class ImmuneStatePredictor:
                 probability=True, 
                 random_state=self.seed
             )
+        elif model_name == "SVC_rbf":
+            return SVC(kernel="rbf", 
+                       C=0.5, 
+                       gamma="scale", 
+                       probability=True, 
+                       random_state=self.seed)
         return None
     
     def _run_esm_grid_search(self, master_labels, dataset_name):
@@ -360,7 +366,7 @@ class ImmuneStatePredictor:
             
             kf = StratifiedKFold(n_splits=self.n_folds, shuffle=True, random_state=self.seed)
             
-            for model_name in ["ExtraTrees_shallow", "SVM_Linear"]:
+            for model_name in ["ExtraTrees_shallow", "SVM_Linear", "SVC_rbf"]:
                 print(f"  Testing [{variant_name}] + [{model_name}] ... ", end="")
                 fold_aucs = []
                 
@@ -688,27 +694,52 @@ class ImmuneStatePredictor:
                 print()
         
         else:
-            # EXPERIMENTAL: Use weighted ensemble with positive weights only
-            print(f"\n  Dataset Type: EXPERIMENTAL - Using Weighted Ensemble")
+            # EXPERIMENTAL: Use Top-2 Positive strategy
+            print(f"\n  Dataset Type: EXPERIMENTAL - Using Top-2 Positive Strategy")
             
-            # Filter out models with negative weights
+            # Filter models with positive weights
             positive_mask = weights > 0
+            n_positive = np.sum(positive_mask)
             
-            if not np.any(positive_mask):
-                print("  Warning: All weights are negative, using absolute values")
-                positive_mask = np.ones(n_models, dtype=bool)
+            print(f"  Models with positive weights: {n_positive}/{n_models}")
             
-            # Normalize positive weights to sum to 1
             simplified_weights = np.zeros(n_models)
-            positive_weights = np.abs(weights[positive_mask])
-            simplified_weights[positive_mask] = positive_weights / positive_weights.sum()
             
-            print(f"  Filtered Models (positive weights only):")
-            for i, name in enumerate(model_names):
-                if simplified_weights[i] > 0:
-                    print(f"    {name}: weight={simplified_weights[i]:.3f}, CV AUC={individual_aucs[i]:.5f}")
-                else:
-                    print(f"    {name}: EXCLUDED (negative weight={norm_w[i]:.3f})")
+            if n_positive == 0:
+                # Fallback: Select single model with highest absolute weight
+                max_idx = np.argmax(np.abs(weights))
+                simplified_weights[max_idx] = 1.0
+                print(f"  Strategy: Fallback (no positive weights)")
+                print(f"  Selected Model: {model_names[max_idx]} (abs_weight={np.abs(weights[max_idx]):.3f}, CV AUC={individual_aucs[max_idx]:.5f})")
+                
+            elif n_positive == 1:
+                # Select only the single positive model
+                pos_idx = np.where(positive_mask)[0][0]
+                simplified_weights[pos_idx] = 1.0
+                print(f"  Strategy: Single Positive Model")
+                print(f"  Selected Model: {model_names[pos_idx]} (weight={weights[pos_idx]:.3f}, CV AUC={individual_aucs[pos_idx]:.5f})")
+                
+            else:
+                # Select Top 2 models with highest positive weights
+                positive_indices = np.where(positive_mask)[0]
+                positive_weights = weights[positive_mask]
+                
+                # Sort by weight and take top 2
+                sorted_indices = positive_indices[np.argsort(positive_weights)[::-1]]
+                top2_indices = sorted_indices[:2]
+                
+                # Renormalize weights to sum to 1.0
+                top2_weights = weights[top2_indices]
+                simplified_weights[top2_indices] = top2_weights / top2_weights.sum()
+                
+                print(f"  Strategy: Top 2 Positive Models")
+                for idx in top2_indices:
+                    print(f"    {model_names[idx]}: weight={simplified_weights[idx]:.3f} (original={weights[idx]:.3f}, CV AUC={individual_aucs[idx]:.5f})")
+                
+                # Show excluded models
+                for i, name in enumerate(model_names):
+                    if simplified_weights[i] == 0:
+                        print(f"    {name}: EXCLUDED (weight={weights[i]:.3f})")
             
             print(f"  Final Ensemble Weights: {model_names[0]}={simplified_weights[0]:.3f}, {model_names[1]}={simplified_weights[1]:.3f}", end="")
             if X_esm is not None:

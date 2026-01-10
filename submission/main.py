@@ -332,7 +332,7 @@ def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str
     print(f"\n✅ Feature generation complete for {dataset_name}\n")
 
 
-def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True) -> None:
+def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True) -> None:
     validate_dirs_and_files(train_dir, test_dirs, out_dir)
     
     # Ensure representations and aggregations exist for all datasets
@@ -348,8 +348,12 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
         _ensure_representations_exist(test_dir, "test", out_dir)
     
     # Check for reproducibility - if input matches a known Kaggle dataset
-    kaggle_reproduce_dir = os.path.join(os.path.dirname(__file__), 'kaggle_reproduce')
-    matched_dataset = check_reproducibility(train_dir, test_dirs, kaggle_reproduce_dir)
+    if use_reproduce:
+        kaggle_reproduce_dir = os.path.join(os.path.dirname(__file__), 'kaggle_reproduce')
+        matched_dataset = check_reproducibility(train_dir, test_dirs, kaggle_reproduce_dir)
+    else:
+        print("\n⚠️  Skipping reproducibility check (--no-reproduce flag set)")
+        matched_dataset = None
     
     if matched_dataset:
         # Found a match - use the reproduction script
@@ -418,8 +422,10 @@ def run():
                         help="Device to use for computation ('cpu' or 'cuda').")
     parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
                         help="Disable ranking of important sequences (faster training)")
+    parser.add_argument("--no-reproduce", dest='use_reproduce', action='store_false', default=True,
+                        help="Skip checking for kaggle reproduce scripts and always retrain")
     args = parser.parse_args()
-    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq)
+    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce)
 
 
 if __name__ == "__main__":
