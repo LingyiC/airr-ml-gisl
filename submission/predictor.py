@@ -116,7 +116,7 @@ class ImmuneStatePredictor:
         
         # Configuration
         self.seed = 42
-        self.n_folds = 5
+        self.n_folds = 2
         self.model_selection_method = kwargs.get('model_selection_method', 'hybrid')  # 'cv', 'weights', or 'hybrid'
         self.rank_topseq = kwargs.get('rank_topseq', True)  # Whether to rank important sequences
 

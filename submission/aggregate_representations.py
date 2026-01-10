@@ -19,12 +19,12 @@ from typing import Tuple, List, Optional
 class AggregateConfig:
     """Configuration for representation aggregation."""
     
-    # Base paths
-    representation_dir = "/Users/lingyi/Documents/airr-ml/workingFolder/output/representations/"
-    aggregate_out_dir = "/Users/lingyi/Documents/airr-ml/workingFolder/output/aggregates/"
-    train_data_dir = "/Users/lingyi/Documents/airr-ml/data/train_datasets"
-    test_data_dir = "/Users/lingyi/Documents/airr-ml/data/test_datasets"
-    sample_submissions_path = "/Users/lingyi/Documents/airr-ml/data/sample_submissions.csv"
+    # Base paths - should be set by the calling code
+    representation_dir = None  # Set via arguments
+    aggregate_out_dir = None  # Set via arguments
+    train_data_dir = None  # Set via arguments
+    test_data_dir = None  # Set via arguments
+    sample_submissions_path = None  # Set via arguments
     
     # Pooling methods
     bert_pooling_methods = ["mean", "max"]  # BERT/ESM pooling (excluding cls)

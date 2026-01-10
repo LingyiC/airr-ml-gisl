@@ -41,9 +41,8 @@ from sklearn.metrics import roc_auc_score
 SEED = 42
 N_FOLDS = 5
 
-# Default paths for pre-computed features
-DEFAULT_BASE_DIR = "/Users/lingyi/Documents/airr-ml"
-DEFAULT_OUT_DIR = "/Users/lingyi/Documents/airr-ml/workingFolder/output"
+# Default paths removed - all paths should be provided via command-line arguments
+# DEFAULT_BASE_DIR and DEFAULT_OUT_DIR are not needed
 
 
 # ==============================================================================

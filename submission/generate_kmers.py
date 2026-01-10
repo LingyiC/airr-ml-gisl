@@ -21,10 +21,10 @@ from tqdm import tqdm
 class KmerConfig:
     """Configuration for k-mer feature generation."""
     
-    # Paths
-    train_dir = "/Users/lingyi/Documents/airr-ml/data/train_datasets"
-    test_dirs = ["/Users/lingyi/Documents/airr-ml/data/test_datasets"]
-    kmer_out_dir = "/Users/lingyi/Documents/airr-ml/workingFolder/output/kmer/"
+    # Paths - should be set by the calling code
+    train_dir = None  # Set via arguments
+    test_dirs = None  # Set via arguments
+    kmer_out_dir = None  # Set via arguments
     
     # K-mer settings
     k_values = [3, 4]  # k3 and k4

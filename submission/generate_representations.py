@@ -44,10 +44,10 @@ def seed_everything(seed=42):
 class RepresentationConfig:
     """Configuration for representation generation."""
     
-    # Paths
-    train_dir = "/Users/lingyi/Documents/airr-ml/data/train_datasets"
-    test_dirs = ["/Users/lingyi/Documents/airr-ml/data/test_datasets"]
-    representation_out_dir = "/Users/lingyi/Documents/airr-ml/workingFolder/output/representations/"
+    # Paths - should be set by the calling code
+    train_dir = None  # Set via arguments
+    test_dirs = None  # Set via arguments
+    representation_out_dir = None  # Set via arguments
 
     # Data selection
     target_ids = [1, 2, 3, 4, 5, 7, 8]
