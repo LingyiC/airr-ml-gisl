@@ -366,7 +366,7 @@ class ImmuneStatePredictor:
             
             kf = StratifiedKFold(n_splits=self.n_folds, shuffle=True, random_state=self.seed)
             
-            for model_name in ["ExtraTrees_shallow", "SVM_Linear", "SVC_rbf"]:
+            for model_name in ["ExtraTrees_shallow", "SVM_Linear"]:
                 print(f"  Testing [{variant_name}] + [{model_name}] ... ", end="")
                 fold_aucs = []
                 
@@ -572,10 +572,17 @@ class ImmuneStatePredictor:
         n_models = 2 if X_esm is None else 3
         oof_preds = np.zeros((len(ids_array), n_models))
         
+        # Initialize feature selection storage
+        self.kmer_feature_indices = None
+        TOP_K_KMERS = 5000
+        
+        # FIRST PASS: Train without feature selection to determine top-2
+        print("\n  === First Pass: Determining Top-2 Models ===")
+        
         for fold, (train_idx, val_idx) in enumerate(kf.split(X_kmer, y)):
             print(f"  Fold {fold+1}/{self.n_folds}")
             
-            # A. K-mer Model with optimized C
+            # A. K-mer Model (no feature selection yet)
             self.kmer_model = LogisticRegression(
                 penalty='l1', C=best_c, solver='liblinear', 
                 class_weight='balanced', random_state=self.seed
@@ -600,18 +607,123 @@ class ImmuneStatePredictor:
                 self.esm_model.fit(Xe_tr, y[train_idx])
                 oof_preds[val_idx, 2] = self.esm_model.predict_proba(Xe_val)[:, 1]
         
-        # Train final meta-model on full data with optimized C
-        self.kmer_scaler = StandardScaler()
-        Xk_full = self.kmer_scaler.fit_transform(X_kmer)
-        self.kmer_model = LogisticRegression(
-            penalty='l1', C=best_c, solver='liblinear',
-            class_weight='balanced', random_state=self.seed
+        # Train meta-learner to determine top-2
+        meta_model_temp = LogisticRegression(
+            penalty=None, 
+            solver='lbfgs', 
+            random_state=self.seed, 
+            max_iter=1000,
+            tol=1e-6
         )
+        meta_model_temp.fit(oof_preds, y)
+        
+        weights_temp = meta_model_temp.coef_[0]
+        
+        # Determine top-2 for experimental datasets
+        needs_retraining = False
+        if self.dataset_type == 'experimental' and X_esm is not None:
+            # Filter positive weights and get top 2
+            positive_mask = weights_temp > 0
+            n_positive = np.sum(positive_mask)
+            
+            if n_positive >= 2:
+                positive_indices = np.where(positive_mask)[0]
+                positive_weights = weights_temp[positive_mask]
+                sorted_indices = positive_indices[np.argsort(positive_weights)[::-1]]
+                top2_indices = set(sorted_indices[:2])
+                
+                # Check if top-2 is K-mer (0) + ESM (2)
+                if top2_indices == {0, 2}:
+                    print(f"\n  ✓ Experimental dataset with top-2: K-mer + ESM")
+                    print(f"  ➜ Re-training with variance-based feature selection...")
+                    needs_retraining = True
+        
+        # SECOND PASS: Re-train with Dataset8 strategy if needed
+        if needs_retraining:
+            print("\n  === Second Pass: Dataset8 Strategy (SVM + L1-LR with fixed weights) ===")
+            print("  Forcing ESM variant: BertMax_RowStd (to match Dataset8_reproduce.py)")
+            
+            # Override ESM variant to BertMax_RowStd for Dataset8 strategy
+            self.best_esm_variant = "BertMax_RowStd"
+            
+            oof_preds = np.zeros((len(ids_array), n_models))  # Reset OOF predictions
+            
+            for fold, (train_idx, val_idx) in enumerate(kf.split(X_kmer, y)):
+                print(f"  Fold {fold+1}/{self.n_folds}")
+                
+                # A. K-mer Model WITH variance-based feature selection + Dataset8 params
+                X_kmer_train_fold = X_kmer[train_idx]
+                X_kmer_val_fold = X_kmer[val_idx]
+                
+                # Variance-based feature selection (top 5000 K-mers)
+                if X_kmer_train_fold.shape[1] > TOP_K_KMERS:
+                    variances = np.var(X_kmer_train_fold, axis=0)
+                    top_indices = np.argsort(variances)[-TOP_K_KMERS:]
+                    
+                    # Store indices from first fold for consistency
+                    if fold == 0:
+                        self.kmer_feature_indices = top_indices
+                        print(f"    K-mer feature selection: top {TOP_K_KMERS} by variance")
+                    
+                    X_kmer_train_fold = X_kmer_train_fold[:, top_indices]
+                    X_kmer_val_fold = X_kmer_val_fold[:, top_indices]
+                
+                # Use Dataset8 params: L1 Logistic with C=0.5 (no class_weight='balanced')
+                self.kmer_model = LogisticRegression(
+                    penalty='l1', C=0.5, solver='liblinear', 
+                    max_iter=2000, random_state=self.seed
+                )
+                self.kmer_scaler = StandardScaler()
+                Xk_tr = self.kmer_scaler.fit_transform(X_kmer_train_fold)
+                Xk_val = self.kmer_scaler.transform(X_kmer_val_fold)
+                self.kmer_model.fit(Xk_tr, y[train_idx])
+                oof_preds[val_idx, 0] = self.kmer_model.predict_proba(Xk_val)[:, 1]
+                
+                # B. Public Clone Model (keep for compatibility but will be excluded)
+                self.public_model = PublicCloneModel()
+                self.public_model.fit(seqs_dict, y[train_idx], ids_array[train_idx])
+                oof_preds[val_idx, 1] = self.public_model.predict_proba(seqs_dict, ids_array[val_idx])
+                
+                # C. ESM Model - Use SVM like Dataset8
+                if X_esm is not None:
+                    self.esm_model = SVC(kernel="rbf", C=0.5, gamma="scale", 
+                                        probability=True, random_state=self.seed)
+                    self.esm_scaler = StandardScaler()
+                    Xe_tr = self.esm_scaler.fit_transform(X_esm[train_idx])
+                    Xe_val = self.esm_scaler.transform(X_esm[val_idx])
+                    self.esm_model.fit(Xe_tr, y[train_idx])
+                    oof_preds[val_idx, 2] = self.esm_model.predict_proba(Xe_val)[:, 1]
+            
+            # Use fixed Dataset8 weights: 80% ESM, 20% K-mer
+            print("\n  Using Dataset8 fixed weights: 80% ESM + 20% K-mer")
+        
+        # Train final models on full data
+        # Apply feature selection to K-mer data if indices were stored
+        X_kmer_full = X_kmer
+        if self.kmer_feature_indices is not None:
+            X_kmer_full = X_kmer[:, self.kmer_feature_indices]
+            print(f"\n  Applied K-mer feature selection: {len(self.kmer_feature_indices)} features")
+        
+        self.kmer_scaler = StandardScaler()
+        Xk_full = self.kmer_scaler.fit_transform(X_kmer_full)
+        
+        # Use Dataset8 params if retraining was triggered, otherwise use optimized params
+        if needs_retraining:
+            self.kmer_model = LogisticRegression(
+                penalty='l1', C=0.5, solver='liblinear',
+                max_iter=2000, random_state=self.seed
+            )
+        else:
+            self.kmer_model = LogisticRegression(
+                penalty='l1', C=best_c, solver='liblinear',
+                class_weight='balanced', random_state=self.seed
+            )
         self.kmer_model.fit(Xk_full, y)
         
         # Report K-mer model statistics
         n_active_features = np.sum(self.kmer_model.coef_ != 0)
-        print(f"  K-mer model: {n_active_features} active features (C={best_c})")
+        c_value = 0.5 if needs_retraining else best_c
+        print(f"  K-mer model: {n_active_features} active features (C={c_value})")
         
         self.public_model = PublicCloneModel()
         self.public_model.fit(seqs_dict, y, ids_array)
@@ -619,7 +731,14 @@ class ImmuneStatePredictor:
         if X_esm is not None:
             self.esm_scaler = StandardScaler()
             Xe_full = self.esm_scaler.fit_transform(X_esm)
-            self.esm_model = self._get_ml_model(self.best_esm_model_type)
+            
+            # Use SVM for ESM if Dataset8 strategy was triggered
+            if needs_retraining:
+                self.esm_model = SVC(kernel="rbf", C=0.5, gamma="scale", 
+                                    probability=True, random_state=self.seed)
+            else:
+                self.esm_model = self._get_ml_model(self.best_esm_model_type)
+            
             self.esm_model.fit(Xe_full, y)
         
         # Train meta-learner
@@ -694,47 +813,65 @@ class ImmuneStatePredictor:
                 print()
         
         else:
-            # EXPERIMENTAL: Use Top-2 Positive strategy
+            # EXPERIMENTAL: Use Top-2 Positive strategy (or Dataset8 fixed weights)
             print(f"\n  Dataset Type: EXPERIMENTAL - Using Top-2 Positive Strategy")
             
-            # Filter models with positive weights
-            positive_mask = weights > 0
-            n_positive = np.sum(positive_mask)
-            
-            print(f"  Models with positive weights: {n_positive}/{n_models}")
-            
-            simplified_weights = np.zeros(n_models)
-            
-            if n_positive == 0:
-                # Fallback: Select single model with highest absolute weight
-                max_idx = np.argmax(np.abs(weights))
-                simplified_weights[max_idx] = 1.0
-                print(f"  Strategy: Fallback (no positive weights)")
-                print(f"  Selected Model: {model_names[max_idx]} (abs_weight={np.abs(weights[max_idx]):.3f}, CV AUC={individual_aucs[max_idx]:.5f})")
+            # Check if Dataset8 strategy was used
+            if needs_retraining:
+                # Override with Dataset8 fixed weights: 80% ESM, 20% K-mer
+                simplified_weights = np.zeros(n_models)
+                simplified_weights[0] = 0.2  # K-mer: 20%
+                simplified_weights[2] = 0.8  # ESM: 80%
+                # Public (index 1) = 0.0 (excluded)
                 
-            elif n_positive == 1:
-                # Select only the single positive model
-                pos_idx = np.where(positive_mask)[0][0]
-                simplified_weights[pos_idx] = 1.0
-                print(f"  Strategy: Single Positive Model")
-                print(f"  Selected Model: {model_names[pos_idx]} (weight={weights[pos_idx]:.3f}, CV AUC={individual_aucs[pos_idx]:.5f})")
-                
+                print(f"  Strategy: Dataset8 Fixed Weights")
+                print(f"    K-mer: weight=0.200 (20%)")
+                print(f"    ESM: weight=0.800 (80%)")
+                print(f"    Public: EXCLUDED")
             else:
-                # Select Top 2 models with highest positive weights
-                positive_indices = np.where(positive_mask)[0]
-                positive_weights = weights[positive_mask]
+                # Standard Top-2 Positive strategy
+                # Filter models with positive weights
+                positive_mask = weights > 0
+                n_positive = np.sum(positive_mask)
                 
-                # Sort by weight and take top 2
-                sorted_indices = positive_indices[np.argsort(positive_weights)[::-1]]
-                top2_indices = sorted_indices[:2]
+                print(f"  Models with positive weights: {n_positive}/{n_models}")
                 
-                # Renormalize weights to sum to 1.0
-                top2_weights = weights[top2_indices]
-                simplified_weights[top2_indices] = top2_weights / top2_weights.sum()
+                simplified_weights = np.zeros(n_models)
                 
-                print(f"  Strategy: Top 2 Positive Models")
-                for idx in top2_indices:
-                    print(f"    {model_names[idx]}: weight={simplified_weights[idx]:.3f} (original={weights[idx]:.3f}, CV AUC={individual_aucs[idx]:.5f})")
+                if n_positive == 0:
+                    # Fallback: Select single model with highest absolute weight
+                    max_idx = np.argmax(np.abs(weights))
+                    simplified_weights[max_idx] = 1.0
+                    print(f"  Strategy: Fallback (no positive weights)")
+                    print(f"  Selected Model: {model_names[max_idx]} (abs_weight={np.abs(weights[max_idx]):.3f}, CV AUC={individual_aucs[max_idx]:.5f})")
+                    
+                elif n_positive == 1:
+                    # Select only the single positive model
+                    pos_idx = np.where(positive_mask)[0][0]
+                    simplified_weights[pos_idx] = 1.0
+                    print(f"  Strategy: Single Positive Model")
+                    print(f"  Selected Model: {model_names[pos_idx]} (weight={weights[pos_idx]:.3f}, CV AUC={individual_aucs[pos_idx]:.5f})")
+                    
+                else:
+                    # Select Top 2 models with highest positive weights
+                    positive_indices = np.where(positive_mask)[0]
+                    positive_weights = weights[positive_mask]
+                    
+                    # Sort by weight and take top 2
+                    sorted_indices = positive_indices[np.argsort(positive_weights)[::-1]]
+                    top2_indices = sorted_indices[:2]
+                    
+                    # Renormalize weights to sum to 1.0
+                    top2_weights = weights[top2_indices]
+                    simplified_weights[top2_indices] = top2_weights / top2_weights.sum()
+                    
+                    print(f"  Strategy: Top 2 Positive Models")
+                    for idx in top2_indices:
+                        print(f"    {model_names[idx]}: weight={simplified_weights[idx]:.3f} (original={weights[idx]:.3f}, CV AUC={individual_aucs[idx]:.5f})")
+                
+                # Check if top-2 is K-mer + ESM (indices 0 and 2)
+                if X_esm is not None and set(top2_indices) == {0, 2}:
+                    print(f"  ✓ Top-2 is K-mer + ESM: Feature selection was applied")
                 
                 # Show excluded models
                 for i, name in enumerate(model_names):
@@ -787,8 +924,12 @@ class ImmuneStatePredictor:
         # 4. Generate predictions from each model
         print(f"  Generating predictions...")
         
-        # K-mer predictions
-        Xk_scaled = self.kmer_scaler.transform(X_kmer_test)
+        # K-mer predictions (apply feature selection if used during training)
+        X_kmer_test_filtered = X_kmer_test
+        if self.kmer_feature_indices is not None:
+            X_kmer_test_filtered = X_kmer_test[:, self.kmer_feature_indices]
+        
+        Xk_scaled = self.kmer_scaler.transform(X_kmer_test_filtered)
         pred_kmer = self.kmer_model.predict_proba(Xk_scaled)[:, 1]
         
         # Public clone predictions
