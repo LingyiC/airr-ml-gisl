@@ -39,10 +39,6 @@ parser.add_argument("--test_dirs", required=True,
                     help="Path to test data directory")
 parser.add_argument("--out_dir", required=True,
                     help="Path to output directory")
-parser.add_argument("--n_jobs", type=int, default=1,
-                    help="Number of CPU cores to use (for compatibility)")
-parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
-                    help="Disable ranking of important sequences (faster training)")
 
 args = parser.parse_args()
 
@@ -390,22 +386,31 @@ else:
     # Predict
     probs = clf.predict_proba(X_test)[:, 1]
     
+    repertoire_ids = [f.replace('.tsv', '') for f in test_files]
     # Create Submission (strip .tsv extension)
-    submission = pd.DataFrame({
-        'filename': [f.replace('.tsv', '') for f in test_files],
-        'probability': probs
+    predictions_df = pd.DataFrame({
+        'ID': repertoire_ids,
+        'dataset': [os.path.basename(TEST_DIR)] * len(repertoire_ids),
+        'label_positive_probability': probs
     })
 
+    # Add placeholder columns for output format compatibility
+    predictions_df['junction_aa'] = -999.0
+    predictions_df['v_call'] = -999.0
+    predictions_df['j_call'] = -999.0
+
+    predictions_df = predictions_df[['ID', 'dataset', 'label_positive_probability', 'junction_aa', 'v_call', 'j_call']]
+
     sub_filename = os.path.join(OUT_PATH, f"{os.path.basename(TRAIN_DIR)}_test_predictions.tsv")
-    submission.to_csv(sub_filename, index=False)
+    predictions_df.to_csv(sub_filename, index=False, sep='\t')
     print(f"\nSUCCESS! Predictions saved to '{sub_filename}'")
-    print(submission.head())
+    print(predictions_df.head())
 
     """
     python Dataset6_reproduce.py \
         --train_dir /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_6 \
         --test_dirs /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/test_datasets/test_datasets/test_dataset_6 \
-        --out_dir /Users/quack/projects/airr/output_reproduce_6
+        --out_dir /Users/quack/projects/airr/output_reproduce
     """
 
 ####### IMPORTANT SEQUENCES #######
@@ -962,7 +967,7 @@ class ImmuneStatePredictor:
     Immune state predictor using combined k-mer encoding (3-mers + 4-mers).
     """
 
-    def __init__(self, k_list=[3, 4], min_kmer_count=2, n_jobs=1, device='cpu', rank_topseq: bool = True, **kwargs):
+    def __init__(self, k_list=[3, 4], min_kmer_count=2, n_jobs=1, device='cpu', **kwargs):
         """
         Initializes the predictor.
 
@@ -971,12 +976,10 @@ class ImmuneStatePredictor:
             min_kmer_count: Minimum count threshold for k-mers (memory optimization)
             n_jobs: Number of CPU cores to use
             device: Device for computation ('cpu' or 'cuda')
-            rank_topseq: If True, ranks important sequences; if False, skips ranking (default: True)
         """
         self.k_list = k_list
         self.min_kmer_count = min_kmer_count
         self.train_ids_ = None
-        self.rank_topseq = rank_topseq
         total_cores = os.cpu_count()
         if n_jobs == -1:
             self.n_jobs = total_cores
@@ -1028,14 +1031,10 @@ class ImmuneStatePredictor:
         self.train_ids_ = train_ids
 
         # Identify important sequences
-        if self.rank_topseq:
-            self.important_sequences_ = self.identify_associated_sequences(
-                train_dir_path=train_dir_path, 
-                top_k=50000  # Updated to 50k for submission
-            )
-        else:
-            print("[Training] Skipping important sequence ranking (--no-topseq)")
-            self.important_sequences_ = None
+        self.important_sequences_ = self.identify_associated_sequences(
+            train_dir_path=train_dir_path, 
+            top_k=50000  # Updated to 50k for submission
+        )
 
         print("[Training] Training complete.")
         return self
@@ -1170,8 +1169,7 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
     """Saves important sequences to a TSV file."""
     seqs = predictor.important_sequences_
     if seqs is None or seqs.empty:
-        print(f"Skipping important sequences (not generated or --no-topseq was used)")
-        return
+        raise ValueError("No important sequences available to save")
 
     seqs_path = os.path.join(out_dir, f"{os.path.basename(train_dir)}_important_sequences.tsv")
     save_tsv(seqs, seqs_path)
@@ -1179,7 +1177,7 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
 
 
 def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, 
-         k_list: List[int] = [3, 4], min_kmer_count: int = 2, save_model: bool = True, rank_topseq: bool = True) -> None:
+         k_list: List[int] = [3, 4], min_kmer_count: int = 2, save_model: bool = True) -> None:
     """Main pipeline for training and prediction."""
 
     # LC: Changed here to use the updated class
@@ -1187,8 +1185,7 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
         k_list=k_list,
         min_kmer_count=min_kmer_count,
         n_jobs=n_jobs,
-        device=device,
-        rank_topseq=rank_topseq
+        device=device
     )
     _train_predictor(predictor, train_dir)
     
@@ -1217,8 +1214,7 @@ try:
         device="cpu",  # GPU does not help much here
         k_list=K_MERS,
         min_kmer_count=MIN_KMER_COUNT,
-        save_model=True,  # Save the trained model
-        rank_topseq=args.topseq
+        save_model=True  # Save the trained model
     )
     print(f"\nDataset completed successfully.")
     
@@ -1235,3 +1231,123 @@ except Exception as e:
 print(f"\n{'='*80}")
 print("Pipeline execution complete!")
 print(f"{'='*80}")
+
+"""
+(venv) quack@quacks-MacBook-Pro-326 packcontainer %     python Dataset6_reproduce.py \
+        --train_dir /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_6 \
+        --test_dirs /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/test_datasets/test_datasets/test_dataset_6 \
+        --out_dir /Users/quack/projects/airr/output_reproduce_6
+Split: 320 train, 80 validation (seed=42)
+Analyzing 160 Positive Patients and 160 Negative Patients.
+Counting sequences...
+Positives: 100%|██████████████████████████████| 160/160 [00:05<00:00, 31.24it/s]
+Negatives: 100%|██████████████████████████████| 160/160 [00:03<00:00, 42.81it/s]
+
+Scanning for features (Min Pos=3, Max Neg=0, P < 1)...
+100%|████████████████████████████| 3346357/3346357 [00:01<00:00, 1833676.52it/s]
+
+========================================
+DIAGNOSTIC REPORT
+Total Unique Sequences Seen: 3346357
+Discarded (Too Rare in Positives): 3284931
+Discarded (Too Common in Negatives): 45541
+Discarded (Not Significant): 0
+KEPT (Significant Signals): 15885
+========================================
+Top 5 Sequences found:
+      pos_count  neg_count       p_value
+184          33          0  1.848052e-11
+1029         33          0  1.848052e-11
+147          27          0  2.249605e-09
+89           26          0  4.935699e-09
+1151         26          0  4.935699e-09
+
+Saved to 'enriched_signatures_strict.pkl'. You can now run Part 2.
+Loaded 15885 features.
+Building Training Matrix...
+Building Matrix: 100%|████████████████████████| 320/320 [00:05<00:00, 63.41it/s]
+Building Validation Matrix...
+Building Matrix: 100%|██████████████████████████| 80/80 [00:01<00:00, 64.25it/s]
+Training Lasso (L1) Model...
+
+==============================
+LASSO RESULTS (Features=15885)
+Validation AUC: 0.9894
+Validation Acc: 0.8875
+Active Features Used: 79
+==============================
+Avg Prob for Positives: 0.7172
+Avg Prob for Negatives: 0.0934
+--- RUNNING PIPELINE FOR DATASET /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_6 ---
+Params: MinPos=3, MaxNeg=0, P=1
+Step 1: Loading Metadata...
+Training on FULL DATA: 200 Positives, 200 Negatives
+Step 2: Counting Sequences (Enrichment)...
+Positives: 100%|██████████████████████████████| 200/200 [00:07<00:00, 28.49it/s]
+Negatives: 100%|██████████████████████████████| 200/200 [00:04<00:00, 41.71it/s]
+Step 3: Calculating Statistics & Selecting Features...
+100%|████████████████████████████| 4112564/4112564 [00:01<00:00, 2229852.60it/s]
+
+SELECTED FEATURES: 24630
+Signals saved to '/Users/quack/projects/airr/output_reproduce_6/train_dataset_6_important_sequences_fisherexact.tsv'
+Step 4: Building Sparse Training Matrix...
+100%|█████████████████████████████████████████| 400/400 [00:07<00:00, 53.69it/s]
+Step 5: Training Lasso Logistic Regression...
+Model Trained. Active Features: 82
+Step 6: Processing Test Data...
+Found 400 test files.
+100%|█████████████████████████████████████████| 400/400 [00:07<00:00, 55.33it/s]
+
+SUCCESS! Predictions saved to '/Users/quack/projects/airr/output_reproduce_6/train_dataset_6_test_predictions.tsv'
+                           filename  probability
+0  0060a0d196df927b0c41a6e62f061502     0.934598
+1  014835b4092ed9f61a8d84a75fc0b4df     0.939578
+2  01c6974c6734c6420349465a92308013     0.994422
+3  01fcfc48bd89c1814533a7811a3225e4     0.065401
+4  022093e62f26e3e600c0b80e6c6efe24     0.214729
+
+================================================================================
+Processing Dataset
+================================================================================
+
+Fitting model on examples in `/Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_6`...
+
+[Training] Starting fit on /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_6
+[Training] K-mer sizes: [3, 4]
+[Training] Min k-mer count: 20
+
+[K-mer Encoding] Processing 400 files with k-values: [3, 4]
+[K-mer Encoding] Min k-mer count threshold: 20
+
+[K-mer Encoding] First pass: collecting k-mer frequencies...
+Collecting k-mer frequencies: 100%|███████████| 400/400 [00:48<00:00,  8.28it/s]
+
+[K-mer Encoding] Total unique k-mers: 152070
+[K-mer Encoding] Frequent k-mers (count >= 20): 101258
+[K-mer Encoding] Memory reduction: 33.4%
+
+[K-mer Encoding] Second pass: encoding features...
+Encoding [3, 4]-mers: 100%|███████████████████| 400/400 [00:44<00:00,  8.90it/s]
+
+[K-mer Encoding] Final feature matrix shape: (400, 101258)
+Aligned 400 samples with labels
+Best C: 0.2 (CV roc_auc: 0.9523)
+
+[Sequence Identification] Identifying top 50000 sequences...
+Loading files: 100%|█████████████████████████| 400/400 [00:03<00:00, 112.01it/s]
+[Sequence Identification] Scoring 7717545 unique sequences...
+Scoring sequences (batched): 100%|████████| 15436/15436 [19:09<00:00, 13.43it/s]
+[Sequence Identification] Identified 50000 top sequences ranked by importance score.
+[Training] Training complete.
+Trained model saved to `/Users/quack/projects/airr/output_reproduce_6/train_dataset_6_model.pkl`.
+Important sequences written to `/Users/quack/projects/airr/output_reproduce_6/train_dataset_6_important_sequences.tsv`.
+
+Dataset completed successfully.
+Concatenated output written to `/Users/quack/projects/airr/output_reproduce_6/submissions.csv`.
+
+Concatenated output files saved.
+
+================================================================================
+Pipeline execution complete!
+================================================================================
+"""
