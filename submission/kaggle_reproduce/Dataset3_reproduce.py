@@ -44,7 +44,7 @@ parser.add_argument("--n_jobs", type=int, default=1,
                     help="Number of CPU cores to use (for compatibility)")
 parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
                     help="Disable ranking of important sequences (faster training)")
-
+                    
 args = parser.parse_args()
 
 
@@ -396,18 +396,27 @@ else:
     # Predict
     probs = clf.predict_proba(X_test)[:, 1]
     
+    repertoire_ids = [f.replace('.tsv', '') for f in test_files]
     # Create Submission (strip .tsv extension)
-    submission = pd.DataFrame({
-        'filename': [f.replace('.tsv', '') for f in test_files],
-        'probability': probs
+    predictions_df = pd.DataFrame({
+        'ID': repertoire_ids,
+        'dataset': [os.path.basename(TEST_DIR)] * len(repertoire_ids),
+        'label_positive_probability': probs
     })
 
+    # Add placeholder columns for output format compatibility
+    predictions_df['junction_aa'] = -999.0
+    predictions_df['v_call'] = -999.0
+    predictions_df['j_call'] = -999.0
+
+    predictions_df = predictions_df[['ID', 'dataset', 'label_positive_probability', 'junction_aa', 'v_call', 'j_call']]
+
     sub_filename = os.path.join(OUT_PATH, f"{os.path.basename(TRAIN_DIR)}_test_predictions.tsv")
-    submission.to_csv(sub_filename, index=False)
+    predictions_df.to_csv(sub_filename, index=False, sep='\t')
     print(f"\nSUCCESS! Predictions saved to '{sub_filename}'")
-    print(submission.head())
+    print(predictions_df.head())
 
-
+    
 """
     python Dataset3_reproduce.py \
         --train_dir /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_3 \
@@ -727,7 +736,6 @@ def concatenate_output_files(out_dir: str) -> None:
     submissions_file = os.path.join(out_dir, 'submissions.csv')
     concatenated_df.to_csv(submissions_file, index=False)
     print(f"Concatenated output written to `{submissions_file}`.")
-
 
 def get_dataset_pairs(train_dir: str, test_dir: str) -> List[Tuple[str, List[str]]]:
     """Returns list of (train_path, [test_paths]) tuples for dataset pairs."""
@@ -1242,3 +1250,4 @@ except Exception as e:
 print(f"\n{'='*80}")
 print("Pipeline execution complete!")
 print(f"{'='*80}")
+

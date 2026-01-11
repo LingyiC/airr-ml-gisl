@@ -390,22 +390,31 @@ else:
     # Predict
     probs = clf.predict_proba(X_test)[:, 1]
     
+    repertoire_ids = [f.replace('.tsv', '') for f in test_files]
     # Create Submission (strip .tsv extension)
-    submission = pd.DataFrame({
-        'filename': [f.replace('.tsv', '') for f in test_files],
-        'probability': probs
+    predictions_df = pd.DataFrame({
+        'ID': repertoire_ids,
+        'dataset': [os.path.basename(TEST_DIR)] * len(repertoire_ids),
+        'label_positive_probability': probs
     })
 
+    # Add placeholder columns for output format compatibility
+    predictions_df['junction_aa'] = -999.0
+    predictions_df['v_call'] = -999.0
+    predictions_df['j_call'] = -999.0
+
+    predictions_df = predictions_df[['ID', 'dataset', 'label_positive_probability', 'junction_aa', 'v_call', 'j_call']]
+
     sub_filename = os.path.join(OUT_PATH, f"{os.path.basename(TRAIN_DIR)}_test_predictions.tsv")
-    submission.to_csv(sub_filename, index=False)
+    predictions_df.to_csv(sub_filename, index=False, sep='\t')
     print(f"\nSUCCESS! Predictions saved to '{sub_filename}'")
-    print(submission.head())
+    print(predictions_df.head())
 
     """
     python Dataset6_reproduce.py \
         --train_dir /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/train_datasets/train_datasets/train_dataset_6 \
         --test_dirs /Users/quack/projects/airr/adaptive-immune-profiling-challenge-2025/test_datasets/test_datasets/test_dataset_6 \
-        --out_dir /Users/quack/projects/airr/output_reproduce_6
+        --out_dir /Users/quack/projects/airr/output_reproduce
     """
 
 ####### IMPORTANT SEQUENCES #######
