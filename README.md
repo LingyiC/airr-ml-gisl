@@ -1,7 +1,7 @@
 # Ensemble AIRR Predictor - GISL 
 
 This repository provides a reproducible machine learning pipeline for AIRR-ML challenge.
-The pipeline automatically selects the best-performing strategy based on dataset characteristics.
+The pipeline automatically selects the best-performing strategy based on dataset characteristics. 
 
 ## Overview
 
