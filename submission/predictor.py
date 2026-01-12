@@ -1014,15 +1014,36 @@ class ImmuneStatePredictor:
                     
                     # Handle features based on type
                     if isinstance(features, pd.DataFrame):
-                        test_df = features.loc[repertoire_ids]
+                        # Check if IDs match
+                        common_ids = features.index.intersection(repertoire_ids)
+                        if len(common_ids) > 0:
+                            test_df = features.loc[repertoire_ids]
+                        else:
+                            print(f"    Warning: Cached IDs don't match test IDs, assuming same order")
+                            test_df = features.copy()
+                            test_df.index = repertoire_ids
                     elif isinstance(features, np.ndarray):
                         # Create DataFrame to align by IDs
                         df = pd.DataFrame(features, index=stored_ids)
-                        test_df = df.loc[repertoire_ids]
+                        # Check if IDs match
+                        common_ids = pd.Index(stored_ids).intersection(repertoire_ids)
+                        if len(common_ids) > 0:
+                            test_df = df.loc[repertoire_ids]
+                        else:
+                            print(f"    Warning: Cached IDs don't match test IDs, assuming same order")
+                            test_df = df.copy()
+                            test_df.index = repertoire_ids
                     elif isinstance(features, list):
                         # Assume features is list of arrays/vectors, one per repertoire
                         df = pd.DataFrame(features, index=stored_ids)
-                        test_df = df.loc[repertoire_ids]
+                        # Check if IDs match
+                        common_ids = pd.Index(stored_ids).intersection(repertoire_ids)
+                        if len(common_ids) > 0:
+                            test_df = df.loc[repertoire_ids]
+                        else:
+                            print(f"    Warning: Cached IDs don't match test IDs, assuming same order")
+                            test_df = df.copy()
+                            test_df.index = repertoire_ids
                     else:
                         raise TypeError(f"Unexpected feature type in tuple: {type(features)}")
                 

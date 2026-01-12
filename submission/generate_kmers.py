@@ -25,19 +25,23 @@ from sklearn.pipeline import Pipeline
 GLOBAL_CACHE_DIR = None
 # ----------------------------------------
 
-parser = argparse.ArgumentParser(description="Kmer Cache Generator CLI")
-parser.add_argument("--train_dir", required=True,
-                    help="Path to training data directory")
-parser.add_argument("--test_dirs", required=True,
-                    help="Path to test data directory")
-parser.add_argument("--out_dir", required=True,
-                    help="Path to output directory")
-parser.add_argument("--n_jobs", type=int, default=1,
-                    help="Number of CPU cores to use (for compatibility)")
-parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
-                    help="Disable ranking of important sequences (faster training)")
-                    
-args = parser.parse_args()
+# NOTE: Argument parsing moved to prevent conflicts with main.py
+# Only parse arguments if this file is run directly
+args = None
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Kmer Cache Generator CLI")
+    parser.add_argument("--train_dir", required=True,
+                        help="Path to training data directory")
+    parser.add_argument("--test_dirs", required=True,
+                        help="Path to test data directory")
+    parser.add_argument("--out_dir", required=True,
+                        help="Path to output directory")
+    parser.add_argument("--n_jobs", type=int, default=1,
+                        help="Number of CPU cores to use (for compatibility)")
+    parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
+                        help="Disable ranking of important sequences (faster training)")
+                        
+    args = parser.parse_args()
 
 ## some utility functions such as data loaders, etc.
 
@@ -248,6 +252,31 @@ def validate_dirs_and_files(train_dir: str, test_dirs: List[str], out_dir: str) 
     except Exception as e:
         print(f"Failed to create or write to output directory `{out_dir}`: {e}")
         sys.exit(1)
+
+
+def ensure_kmer_features_exist(data_dir: str, dataset_type: str, out_dir: str) -> None:
+    """Ensure k-mer features exist for a dataset by generating/loading cache."""
+    dataset_name = os.path.basename(data_dir)
+    cache_dir = os.path.join(out_dir, "kmer")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    global GLOBAL_CACHE_DIR
+    GLOBAL_CACHE_DIR = cache_dir
+    
+    # Check if cache exists
+    k_lengths = [3, 4]
+    cache_path = _get_cache_path(data_dir, k_lengths)
+    
+    if os.path.exists(cache_path):
+        print(f"✅ K-mer features already cached for {dataset_name}: {cache_path}")
+        return
+    
+    print(f"📊 Generating k-mer features for {dataset_name}...")
+    try:
+        X_df, y_df = load_and_extract_all_features(data_dir, k_lengths=k_lengths)
+        print(f"✅ K-mer features generated and cached: {cache_path}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not generate k-mer features for {dataset_name}: {e}")
 
 
 def concatenate_output_files(out_dir: str) -> None:
@@ -606,34 +635,35 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
     #_save_important_sequences(predictor, out_dir, train_dir)
 
 
-#METADATA_PATH = Path(BASE_PATH / "metadata.csv")
+if __name__ == "__main__":
+    #METADATA_PATH = Path(BASE_PATH / "metadata.csv")
 
-train_datasets_dir = Path(args.train_dir) 
-test_datasets_dir = Path(args.test_dirs)
-results_dir = Path(args.out_dir)
+    train_datasets_dir = Path(args.train_dir) 
+    test_datasets_dir = Path(args.test_dirs)
+    results_dir = Path(args.out_dir)
 
-train_test_dataset_pairs = get_dataset_pairs(train_datasets_dir, test_datasets_dir)
+    train_test_dataset_pairs = get_dataset_pairs(train_datasets_dir, test_datasets_dir)
 
-TARGET_DATASET_IDS = {'1','2','3','4','5','6','7','8'}
+    TARGET_DATASET_IDS = {'1','2','3','4','5','6','7','8'}
 
-print(f"Filtering datasets to process only IDs: {', '.join(TARGET_DATASET_IDS)}")
+    print(f"Filtering datasets to process only IDs: {', '.join(TARGET_DATASET_IDS)}")
 
-for train_dir, test_dirs in train_test_dataset_pairs:
-    dataset_name = os.path.basename(train_dir)
-    try:
-        dataset_id = dataset_name.split('_')[-1] 
-    except:
-        dataset_id = ""
-        
-    if dataset_id in TARGET_DATASET_IDS:
-        print(f"\n✅ Processing dataset ID {dataset_id} ({dataset_name})...")
+    for train_dir, test_dirs in train_test_dataset_pairs:
+        dataset_name = os.path.basename(train_dir)
         try:
-            main(train_dir=train_dir, test_dirs=test_dirs, out_dir=results_dir, n_jobs=4, device="cpu")
-        except FileNotFoundError as e:
-            print(f"❌ ERROR: Skipping {dataset_name} because input TSV files for sequences were not found. Details: {e}")
-            continue
-    else:
-        print(f"   ⏩ Skipping dataset {dataset_name} (ID {dataset_id}).")
+            dataset_id = dataset_name.split('_')[-1] 
+        except:
+            dataset_id = ""
+            
+        if dataset_id in TARGET_DATASET_IDS:
+            print(f"\n✅ Processing dataset ID {dataset_id} ({dataset_name})...")
+            try:
+                main(train_dir=train_dir, test_dirs=test_dirs, out_dir=results_dir, n_jobs=4, device="cpu")
+            except FileNotFoundError as e:
+                print(f"❌ ERROR: Skipping {dataset_name} because input TSV files for sequences were not found. Details: {e}")
+                continue
+        else:
+            print(f"   ⏩ Skipping dataset {dataset_name} (ID {dataset_id}).")
 
 """
 python generate_kmers.py \
