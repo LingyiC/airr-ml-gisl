@@ -128,7 +128,7 @@ Or build an image from this repository
 ```
 docker build \
   --platform linux/amd64 \
-  -t your_namespace/airr25_gisl:0.1.2 .
+  -t your_namespace/airr25_gisl:0.1.3 .
 ```
 
 Reproducing Kaggle results (Dataset 1)
