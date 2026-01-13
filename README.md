@@ -1,4 +1,4 @@
-# Ensemble AIRR Predictor - GISL Team 
+# 🔮 Ensemble AIRR Predictor - GISL Team 
 
 This repository provides a reproducible machine learning pipeline for AIRR-ML challenge (Rank 9th).
 The pipeline automatically selects the best-performing strategy based on dataset characteristics. 
@@ -76,23 +76,7 @@ python3 -m submission.main \
 
 > ⚠️ **Note**: ESM embeddings are computationally expensive and may take a long time.
 
-### Multi-GPU Acceleration for ESM
-
-To speed up ESM representation generation using multiple GPUs:
-
-```bash
-python3 -m submission.main \
-   --train_dir ./train_datasets/train_dataset_x \
-   --test_dirs ./test_datasets/test_dataset_x \
-   --out_dir /Users/lingyi/Documents/airr-ml/workingFolder/output \
-   --no-reproduce \
-   --no-topseq \
-   --n_jobs 4 \
-   --num_gpus 2 \
-   --esm_batch_size 256
-```
-
-> 💡 **Tip**: Use `--num_gpus -1` to use all available GPUs. The batch size will be automatically scaled by the number of GPUs.
+> 💡 **Tip**: By default `--num_gpus -1` to use all available GPUs. The batch size will be automatically scaled by the number of GPUs.
 
 
 
@@ -191,4 +175,8 @@ docker run --rm \
 
 ## 👥 Contributors
 
-* **Team GISL** - Lingyi Cai, Tai-Hsien Ou Yang, Dimitris Anastassiou from Columbia University
+* **Team GISL** from Columbia University
+
+## 📖 Citation
+
+If you use this pipeline in your research, please cite:
