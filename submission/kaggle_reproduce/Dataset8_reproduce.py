@@ -154,7 +154,7 @@ def extract_important_sequences(train_dir, y_train, train_ids, top_n=50000):
     return selected_seqs
 
 
-def compute_kmers_on_fly_dataset8(train_dir, test_dir, train_ids, test_ids, k_list=[3, 4], min_kmer_count=0):
+def compute_kmers_on_fly_dataset8(train_dir, test_dir, train_ids, test_ids, k_list=[4], min_kmer_count=2):
     """
     Compute k-mer features on-the-fly for Dataset8 (frequency normalization).
     
@@ -347,7 +347,7 @@ def run_reproduce_prediction(train_dir: str,
             test_dir=test_dir,
             train_ids=train_ids,
             test_ids=test_ids,
-            min_kmer_count=0
+            min_kmer_count=2
         )
         print(f"   K-mer Train shape: {X_kmer_train.shape}")
         print(f"   K-mer Test shape: {X_kmer_test.shape}")
