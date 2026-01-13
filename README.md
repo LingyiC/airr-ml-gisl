@@ -107,16 +107,18 @@ python3 -m submission.main \
 
 
 
-# Running the docker container
+## Running the docker container
 
 The docker container is available as `th8623/airr25_gisl` on [Docker Hub](https://hub.docker.com/repository/docker/th8623/airr25_gisl/general).
 
 Pull the image from Docker Hub
+
 ```
 docker pull th8623/airr25_gisl:latest
 ```
 
 Or build an image from this repository
+
 ```
 docker build \
   --platform linux/amd64 \
