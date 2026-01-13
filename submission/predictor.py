@@ -228,7 +228,7 @@ class ImmuneStatePredictor:
             print("\n7. Identifying important sequences...")
             self.important_sequences_ = self.identify_associated_sequences(
                 top_k=50000, 
-                dataset_name=dataset_name
+                train_dir_path=train_dir_path
             )
         else:
             print("\n7. Skipping important sequences identification (rank_topseq disabled)")
@@ -1165,12 +1165,12 @@ class ImmuneStatePredictor:
         if self.kmer_model is None:
             raise ValueError("Model not fitted.")
 
-        scaler = self.kmer_model.named_steps['scaler']
-        coefficients = self.kmer_model.named_steps['classifier'].coef_[0]
+        scaler = self.kmer_scaler#self.kmer_model.named_steps['scaler']
+        coefficients = self.kmer_model.coef_[0]#self.kmer_model.named_steps['classifier'].coef_[0]
         # Re-scale coefficients to reflect the unstandardized feature importance
         coefficients = coefficients / scaler.scale_
 
-        kmer_to_index = {kmer: idx for idx, kmer in enumerate(self.kmer_model.feature_names_)}
+        kmer_to_index = {kmer: idx for idx, kmer in enumerate(self.kmer_feature_names_)}
 
         scores = []
         total_seqs = len(sequences_df)
@@ -1198,10 +1198,6 @@ class ImmuneStatePredictor:
             
             scores.extend(batch_scores)
             
-            # Periodic garbage collection
-            if (batch_start // batch_size) % 10 == 0:
-                gc.collect()
-         
         result_df = sequences_df.copy()
         result_df['importance_score'] = scores
        
@@ -1228,7 +1224,7 @@ class ImmuneStatePredictor:
             print(f"[Sequence Identification] Scoring {len(unique_seqs)} unique sequences...")
 
             # Determine k-values used by the fitted model features for scoring sequences
-            k_values_for_scoring = set(len(kmer) for kmer in self.kmer_feature_names)
+            k_values_for_scoring = set(len(kmer) for kmer in self.kmer_feature_names_)
             
             all_sequences_scored = self.score_all_sequences(
                 unique_seqs, 
