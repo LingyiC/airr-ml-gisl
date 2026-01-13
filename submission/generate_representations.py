@@ -55,8 +55,7 @@ class RepresentationConfig:
     # Model settings
     model_name = "facebook/esm2_t6_8M_UR50D"
     batch_size = 128
-    pooling = "all"  # Options: 'cls', 'mean', 'max', or 'all'
-    pooling_to_save = ["mean", "max"]  # Only save these pooling methods
+    pooling = ["mean", "max"]  # Options: 'cls', 'mean', 'max', list of methods, or 'all'
 
     # Debug settings
     debug = False
@@ -169,9 +168,19 @@ class PretrainedEncoder(torch.nn.Module):
         self.norm = nn.LayerNorm(128)
         self.batch_size = batch_size
 
-        if pooling not in ['cls', 'mean', 'max', 'all']:
-            raise ValueError(f"pooling must be 'cls', 'mean', 'max', or 'all', got '{pooling}'")
-        self.pooling = pooling
+        # Validate pooling
+        if isinstance(pooling, str):
+            if pooling not in ['cls', 'mean', 'max', 'all']:
+                raise ValueError(f"pooling must be 'cls', 'mean', 'max', or 'all', got '{pooling}'")
+            self.pooling = pooling
+        elif isinstance(pooling, list):
+            valid_methods = ['cls', 'mean', 'max']
+            for method in pooling:
+                if method not in valid_methods:
+                    raise ValueError(f"Each pooling method must be in {valid_methods}, got '{method}'")
+            self.pooling = pooling
+        else:
+            raise ValueError(f"pooling must be a string or list, got {type(pooling)}")
 
         print(f"✅ Encoder configured with {pooling} pooling, output dimension: {hidden_size}D")
 
@@ -185,10 +194,17 @@ class PretrainedEncoder(torch.nn.Module):
         Returns:
             Embeddings (tensor or dict of tensors based on pooling strategy)
         """
+        # Determine which pooling methods to compute
         if self.pooling == "all":
-            cls_batches = []
-            mean_batches = []
-            max_batches = []
+            methods_to_compute = ['cls', 'mean', 'max']
+        elif isinstance(self.pooling, list):
+            methods_to_compute = self.pooling
+        else:
+            methods_to_compute = [self.pooling]
+        
+        # Initialize storage for each method
+        if len(methods_to_compute) > 1:
+            batches = {method: [] for method in methods_to_compute}
         else:
             all_embeddings = []
 
@@ -219,44 +235,26 @@ class PretrainedEncoder(torch.nn.Module):
                 if seq_len > 1:
                     mask[j, seq_len - 1] = 0  # Exclude EOS
 
-            if self.pooling == "cls":
-                embeddings = hidden_states[:, 0, :]
-                all_embeddings.append(embeddings)
+            # Compute requested pooling methods
+            for method in methods_to_compute:
+                if method == "cls":
+                    emb = hidden_states[:, 0, :]
+                elif method == "mean":
+                    masked_hidden = hidden_states * mask.unsqueeze(-1)
+                    sum_hidden = masked_hidden.sum(dim=1)
+                    emb = sum_hidden / mask.sum(dim=1, keepdim=True).clamp(min=1e-9)
+                elif method == "max":
+                    masked_hidden = hidden_states.masked_fill(mask.unsqueeze(-1) == 0, -1e9)
+                    emb, _ = masked_hidden.max(dim=1)
+                
+                if len(methods_to_compute) > 1:
+                    batches[method].append(emb)
+                else:
+                    all_embeddings.append(emb)
 
-            elif self.pooling == "mean":
-                masked_hidden = hidden_states * mask.unsqueeze(-1)
-                sum_hidden = masked_hidden.sum(dim=1)
-                embeddings = sum_hidden / mask.sum(dim=1, keepdim=True).clamp(min=1e-9)
-                all_embeddings.append(embeddings)
-
-            elif self.pooling == "max":
-                masked_hidden = hidden_states.masked_fill(mask.unsqueeze(-1) == 0, -1e9)
-                embeddings, _ = masked_hidden.max(dim=1)
-                all_embeddings.append(embeddings)
-
-            elif self.pooling == "all":
-                # CLS
-                cls_emb = hidden_states[:, 0, :]
-
-                # Mean pooling
-                masked_hidden_mean = hidden_states * mask.unsqueeze(-1)
-                sum_hidden = masked_hidden_mean.sum(dim=1)
-                mean_emb = sum_hidden / mask.sum(dim=1, keepdim=True).clamp(min=1e-9)
-
-                # Max pooling
-                masked_hidden_max = hidden_states.masked_fill(mask.unsqueeze(-1) == 0, -1e9)
-                max_emb, _ = masked_hidden_max.max(dim=1)
-
-                cls_batches.append(cls_emb)
-                mean_batches.append(mean_emb)
-                max_batches.append(max_emb)
-
-        if self.pooling == "all":
-            return {
-                "cls": torch.cat(cls_batches, dim=0),
-                "mean": torch.cat(mean_batches, dim=0),
-                "max": torch.cat(max_batches, dim=0),
-            }
+        # Return results
+        if len(methods_to_compute) > 1:
+            return {method: torch.cat(batches[method], dim=0) for method in methods_to_compute}
         else:
             H_raw = torch.cat(all_embeddings, dim=0)
             return H_raw
@@ -338,9 +336,6 @@ class RepresentationExtractor:
             # Convert to numpy
             if isinstance(H, dict):
                 H_numpy = {k: v.cpu().numpy() for k, v in H.items()}
-                # Filter to only save specified pooling methods
-                if hasattr(self.cfg, 'pooling_to_save') and self.cfg.pooling_to_save:
-                    H_numpy = {k: v for k, v in H_numpy.items() if k in self.cfg.pooling_to_save}
             else:
                 H_numpy = H.cpu().numpy()
             
