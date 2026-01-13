@@ -106,7 +106,8 @@ python3 -m submission.main \
 | `--no-reproduce` | Skip Kaggle-specific reproduction logic |
 
 
-### Running the docker container
+
+# Running the docker container
 
 The docker container is available as `th8623/airr25_gisl` on [Docker Hub](https://hub.docker.com/repository/docker/th8623/airr25_gisl/general).
 
@@ -114,7 +115,8 @@ The docker container is available as `th8623/airr25_gisl` on [Docker Hub](https:
 docker pull th8623/airr25_gisl:latest
 ```
 
-Reproducing Kaggle Results (Dataset 1)
+Reproducing Kaggle results (Dataset 1)
+
 ```bash
 docker run --rm \
   -v /path/to/train_dataset_1:/data/train_dataset_1 \
@@ -128,7 +130,21 @@ docker run --rm \
   --no-esm
 ```
 
+Running on new datasets
 
+```bash
+docker run --rm \
+  -v /path/to/train_dataset:/data/train_dataset \
+  -v /path/to/test_dataset:/data/test_dataset \
+  -v /path/to/output:/output \
+  th8623/airr25_gisl:latest \
+  --train_dir /data/train_dataset \
+  --test_dir /data/test_dataset \
+  --out_dir /output \
+  --n_jobs 4 \
+  --no-reproduce \
+  --no-topseq
+```
 
 ## Pipeline Overview
 ![Pipeline Overview](Pipeline.png)
