@@ -11,12 +11,14 @@ import os
 import sys
 import pickle
 import argparse
+import gc
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 from typing import List
 from tqdm import tqdm
 from scipy import sparse
+from collections import Counter
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
@@ -152,38 +154,88 @@ def extract_important_sequences(train_dir, y_train, train_ids, top_n=50000):
     return selected_seqs
 
 
-def load_and_align_kmers(train_path, test_path):
+def compute_kmers_on_fly_dataset8(train_dir, test_dir, train_ids, test_ids, k_list=[3, 4], min_kmer_count=0):
     """
-    Loads both Train and Test K-mers.
-    Ensures Test columns EXACTLY match Train columns (order and presence).
+    Compute k-mer features on-the-fly for Dataset8 (frequency normalization).
+    
+    Args:
+        train_dir: Training directory with TSV files
+        test_dir: Test directory with TSV files
+        train_ids: List of training repertoire IDs
+        test_ids: List of test repertoire IDs  
+        k_list: List of K-mer sizes (default: [3, 4] for Dataset8)
+        min_kmer_count: Minimum count threshold
+    
+    Returns:
+        Tuple of (X_train, X_test) with frequency-normalized features
     """
-    print(f"   Loading Train K-mers: {train_path}")
-    with open(train_path, "rb") as f:
-        train_data = pickle.load(f)
-    df_train = train_data[0]
+    print(f"   Computing k-mers on-the-fly (k={k_list}, min_count={min_kmer_count})")
     
-    print(f"   Loading Test K-mers:  {test_path}")
-    with open(test_path, "rb") as f:
-        test_data = pickle.load(f)
-    df_test = test_data[0]
-
-    # 1. Identify 4-mer columns in TRAINING data
-    train_k4_cols = [c for c in df_train.columns if c.startswith('k4__')]
+    # First pass: collect K-mer frequencies from training data
+    print(f"   Collecting k-mer frequencies from training data...")
+    global_kmer_counts = Counter()
     
-    if not train_k4_cols:
-        print("⚠️ No 4-mers found in Train! Using all columns.")
-        train_k4_cols = df_train.columns.tolist()
+    for rep_id in tqdm(train_ids, desc="   Counting k-mers", leave=False):
+        fpath = os.path.join(train_dir, f"{rep_id}.tsv")
+        try:
+            df = pd.read_csv(fpath, sep='\t', usecols=['junction_aa'])
+            for seq in df['junction_aa'].dropna():
+                for k in k_list:
+                    for i in range(len(seq) - k + 1):
+                        global_kmer_counts[seq[i:i + k]] += 1
+        except:
+            pass
     
-    # 2. Select these columns from Train
-    X_train = df_train[train_k4_cols].values.astype(np.float32)
+    # Filter to frequent K-mers (sorted for consistency)
+    frequent_kmers = sorted([kmer for kmer, count in global_kmer_counts.items() if count >= min_kmer_count])
+    print(f"   Found {len(frequent_kmers)} frequent k-mers (from {len(global_kmer_counts)} total)")
     
-    # 3. ALIGN TEST TO TRAIN
-    print("   Aligning Test columns to match Train columns...")
-    df_test_aligned = df_test.reindex(columns=train_k4_cols, fill_value=0)
-    X_test = df_test_aligned.values.astype(np.float32)
-
-    # 4. Normalize (Frequencies)
-    print("   Normalizing counts to frequencies...")
+    # Second pass: encode training features
+    print(f"   Encoding training features...")
+    X_train = []
+    for rep_id in tqdm(train_ids, desc="   Training", leave=False):
+        fpath = os.path.join(train_dir, f"{rep_id}.tsv")
+        kmer_counts = {kmer: 0 for kmer in frequent_kmers}
+        
+        try:
+            df = pd.read_csv(fpath, sep='\t', usecols=['junction_aa'])
+            for seq in df['junction_aa'].dropna():
+                for k in k_list:
+                    for i in range(len(seq) - k + 1):
+                        kmer = seq[i:i + k]
+                        if kmer in kmer_counts:
+                            kmer_counts[kmer] += 1
+        except:
+            pass
+        
+        X_train.append([kmer_counts[kmer] for kmer in frequent_kmers])
+    
+    X_train = np.array(X_train, dtype=np.float32)
+    
+    # Third pass: encode test features
+    print(f"   Encoding test features...")
+    X_test = []
+    for rep_id in tqdm(test_ids, desc="   Test", leave=False):
+        fpath = os.path.join(test_dir, f"{rep_id}.tsv")
+        kmer_counts = {kmer: 0 for kmer in frequent_kmers}
+        
+        try:
+            df = pd.read_csv(fpath, sep='\t', usecols=['junction_aa'])
+            for seq in df['junction_aa'].dropna():
+                for k in k_list:
+                    for i in range(len(seq) - k + 1):
+                        kmer = seq[i:i + k]
+                        if kmer in kmer_counts:
+                            kmer_counts[kmer] += 1
+        except:
+            pass
+        
+        X_test.append([kmer_counts[kmer] for kmer in frequent_kmers])
+    
+    X_test = np.array(X_test, dtype=np.float32)
+    
+    # Normalize to frequencies
+    print(f"   Normalizing to frequencies...")
     # Train
     row_sums_tr = X_train.sum(axis=1, keepdims=True)
     row_sums_tr[row_sums_tr == 0] = 1.0
@@ -194,6 +246,7 @@ def load_and_align_kmers(train_path, test_path):
     row_sums_te[row_sums_te == 0] = 1.0
     X_test = X_test / row_sums_te
     
+    print(f"   Train shape: {X_train.shape}, Test shape: {X_test.shape}")
     return X_train, X_test
 
 
@@ -244,23 +297,25 @@ def run_reproduce_prediction(train_dir: str,
     print(f"K-mer Base Path: {kmer_base_path}")
     print(f"Output Directory: {out_dir}")
     
-    # Construct file paths for pre-computed features
+    # Construct file paths for pre-computed ESM features
     ESM_FOLDER = f"aggregated_{MODEL_VERSION}_{BERT_POOLING}"
     ESM_TRAIN_FILE = os.path.join(esm_base_path, ESM_FOLDER, 
                                    f"esm2_train_dataset_{train_dataset_num}_aggregated_{ROW_POOLING}.pkl")
-    KMER_TRAIN_FILE = os.path.join(kmer_base_path, 
-                                    f"k3_k4_train_dataset_{train_dataset_num}_features.pkl")
     
-    # Check if pre-computed features exist
+    # Check if pre-computed ESM features exist
     if not os.path.exists(ESM_TRAIN_FILE):
         raise FileNotFoundError(f"ESM training features not found: {ESM_TRAIN_FILE}")
-    if not os.path.exists(KMER_TRAIN_FILE):
-        raise FileNotFoundError(f"K-mer training features not found: {KMER_TRAIN_FILE}")
     
-    # Load training data
+    # Load training ESM data
     print("\n[1/5] Loading ESM Training Data...")
     X_esm_train, y_train = load_esm(ESM_TRAIN_FILE)
     print(f"   ESM shape: {X_esm_train.shape}, Labels: {y_train.shape}")
+    
+    # Get training IDs from metadata
+    metadata_path = os.path.join(train_dir, 'metadata.csv')
+    metadata = pd.read_csv(metadata_path)
+    metadata['repertoire_id'] = metadata['filename'].str.replace('.tsv', '', regex=False)
+    train_ids = metadata['repertoire_id'].tolist()
     
     # Process each test directory
     all_predictions = []
@@ -271,18 +326,12 @@ def run_reproduce_prediction(train_dir: str,
         print(f"Processing Test Dataset: {test_dataset_num}")
         print(f"{'='*70}")
         
-        # Construct test file paths
+        # Construct test ESM file path
         ESM_TEST_FILE = os.path.join(esm_base_path, ESM_FOLDER, 
                                       f"esm2_test_dataset_{test_dataset_num}_aggregated_{ROW_POOLING}.pkl")
-        KMER_TEST_FILE = os.path.join(kmer_base_path, 
-                                       f"k3_k4_test_dataset_{test_dataset_num}_features.pkl")
         
         if not os.path.exists(ESM_TEST_FILE):
             print(f"   ⚠️ ESM test features not found: {ESM_TEST_FILE}")
-            print(f"   Skipping {test_dataset_num}")
-            continue
-        if not os.path.exists(KMER_TEST_FILE):
-            print(f"   ⚠️ K-mer test features not found: {KMER_TEST_FILE}")
             print(f"   Skipping {test_dataset_num}")
             continue
         
@@ -291,9 +340,15 @@ def run_reproduce_prediction(train_dir: str,
         X_esm_test, test_ids = load_esm(ESM_TEST_FILE)
         print(f"   ESM shape: {X_esm_test.shape}, Test IDs: {len(test_ids)}")
         
-        # Load & Align K-mers
-        print("\n[3/5] Loading & Aligning K-mer Data...")
-        X_kmer_train, X_kmer_test = load_and_align_kmers(KMER_TRAIN_FILE, KMER_TEST_FILE)
+        # Compute K-mers on-the-fly
+        print("\n[3/5] Computing K-mer Features on-the-fly...")
+        X_kmer_train, X_kmer_test = compute_kmers_on_fly_dataset8(
+            train_dir=train_dir,
+            test_dir=test_dir,
+            train_ids=train_ids,
+            test_ids=test_ids,
+            min_kmer_count=0
+        )
         print(f"   K-mer Train shape: {X_kmer_train.shape}")
         print(f"   K-mer Test shape: {X_kmer_test.shape}")
         

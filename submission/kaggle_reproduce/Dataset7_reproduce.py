@@ -21,13 +21,15 @@ if parent_dir not in sys.path:
 import argparse
 import pickle
 import glob
+import gc
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
-from typing import List
+from typing import List, Iterator, Tuple, Union
 from pathlib import Path
 from tqdm import tqdm
 from scipy import sparse
+from collections import Counter
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -102,6 +104,30 @@ class PublicCloneModel:
         return X.tocsr()
 
 
+def load_data_generator(data_dir: str) -> Iterator[Union[Tuple[str, pd.DataFrame, int], Tuple[str, pd.DataFrame]]]:
+    """
+    Generator that yields (repertoire_id, dataframe, label) for training data
+    or (filename, dataframe) for test data.
+    """
+    metadata_path = os.path.join(data_dir, 'metadata.csv')
+    has_metadata = os.path.exists(metadata_path)
+    
+    if has_metadata:
+        metadata = pd.read_csv(metadata_path)
+        metadata['repertoire_id'] = metadata['filename'].str.replace('.tsv', '', regex=False)
+        metadata_dict = dict(zip(metadata['repertoire_id'], metadata['label_positive']))
+    
+    search_pattern = os.path.join(data_dir, '*.tsv')
+    for file_path in sorted(glob.glob(search_pattern)):
+        repertoire_id = os.path.basename(file_path).replace('.tsv', '')
+        df = pd.read_csv(file_path, sep='\t')
+        
+        if has_metadata and repertoire_id in metadata_dict:
+            yield repertoire_id, df, metadata_dict[repertoire_id]
+        else:
+            yield file_path, df
+
+
 def get_repertoire_ids(data_dir_path):
     """Get list of repertoire IDs from TSV files in directory."""
     files = sorted([f.replace('.tsv', '') for f in os.listdir(data_dir_path) if f.endswith('.tsv')])
@@ -133,92 +159,58 @@ def load_public_sequences(data_dir_path, ids):
             seqs_dict[pid] = set()
     return seqs_dict
 
-def load_kmer_features(kmer_path, ids):
-    """Load and align K-mer features."""
-    if kmer_path is None or not os.path.exists(kmer_path):
-        print("   Warning: K-mer features not available")
-        return None, None
+def compute_kmers_on_fly(data_dir, ids, k_list=[3, 4], min_kmer_count=0):
+    """Compute K-mer features on-the-fly from TSV files.
     
-    with open(kmer_path, "rb") as f:
-        kmer_raw = pickle.load(f)
+    Args:
+        data_dir: Directory containing TSV files
+        ids: List of repertoire IDs to process
+        k_list: List of K-mer sizes (default: [3, 4])
+        min_kmer_count: Minimum count threshold for K-mers
     
-    result_df = None
+    Returns:
+        Tuple of (features_array, feature_names_list)
+    """
+    print(f"   Computing K-mers on-the-fly (k={k_list}, min_count={min_kmer_count})")
     
-    # Handle tuple format (features, ids)
-    if isinstance(kmer_raw, tuple) and len(kmer_raw) >= 2:
-        features = kmer_raw[0]
-        stored_ids = kmer_raw[1]
+    # First pass: collect K-mer frequencies
+    global_kmer_counts = Counter()
+    
+    for rep_id in tqdm(ids, desc="   Collecting K-mer frequencies", leave=False):
+        fpath = os.path.join(data_dir, f"{rep_id}.tsv")
+        try:
+            df = pd.read_csv(fpath, sep='\t', usecols=['junction_aa'])
+            for seq in df['junction_aa'].dropna():
+                for k in k_list:
+                    for i in range(len(seq) - k + 1):
+                        global_kmer_counts[seq[i:i + k]] += 1
+        except:
+            pass
+    
+    # Filter to frequent K-mers
+    frequent_kmers = sorted([kmer for kmer, count in global_kmer_counts.items() if count >= min_kmer_count])
+    print(f"   Found {len(frequent_kmers)} frequent K-mers (from {len(global_kmer_counts)} total)")
+    
+    # Second pass: encode features
+    feature_matrix = []
+    for rep_id in tqdm(ids, desc="   Encoding K-mer features", leave=False):
+        fpath = os.path.join(data_dir, f"{rep_id}.tsv")
+        kmer_counts = {kmer: 0 for kmer in frequent_kmers}
         
-        # Convert stored_ids to list if needed
-        if isinstance(stored_ids, pd.Index):
-            stored_ids = stored_ids.tolist()
-        elif isinstance(stored_ids, np.ndarray):
-            stored_ids = stored_ids.tolist()
+        try:
+            df = pd.read_csv(fpath, sep='\t', usecols=['junction_aa'])
+            for seq in df['junction_aa'].dropna():
+                for k in k_list:
+                    for i in range(len(seq) - k + 1):
+                        kmer = seq[i:i + k]
+                        if kmer in kmer_counts:
+                            kmer_counts[kmer] += 1
+        except:
+            pass
         
-        # If features is a DataFrame
-        if isinstance(features, pd.DataFrame):
-            result_df = features.loc[ids]
-        # If features is array-like, create DataFrame with IDs
-        elif isinstance(features, (np.ndarray, list)):
-            df = pd.DataFrame(features, index=stored_ids)
-            result_df = df.loc[ids]
-        else:
-            raise TypeError(f"Unexpected feature type in tuple: {type(features)}")
+        feature_matrix.append([kmer_counts[kmer] for kmer in frequent_kmers])
     
-    # Single element tuple
-    elif isinstance(kmer_raw, tuple) and len(kmer_raw) == 1:
-        kmer_raw = kmer_raw[0]
-        if isinstance(kmer_raw, pd.DataFrame):
-            result_df = kmer_raw.loc[ids]
-        elif isinstance(kmer_raw, np.ndarray):
-            result_df = pd.DataFrame(kmer_raw, index=ids)
-        else:
-            raise TypeError(f"Unexpected data type in single-element tuple: {type(kmer_raw)}")
-    
-    # Direct DataFrame
-    elif isinstance(kmer_raw, pd.DataFrame):
-        result_df = kmer_raw.loc[ids]
-    
-    # Direct array (assume same order as ids)
-    elif isinstance(kmer_raw, np.ndarray):
-        result_df = pd.DataFrame(kmer_raw, index=ids)
-    
-    # List - check if it's a [features, ids] format (like tuple)
-    elif isinstance(kmer_raw, list):
-        if len(kmer_raw) == 2 and hasattr(kmer_raw[0], '__len__'):
-            # Treat like tuple format
-            features = kmer_raw[0]
-            stored_ids = kmer_raw[1]
-            
-            # Convert stored_ids to list if needed
-            if isinstance(stored_ids, pd.Index):
-                stored_ids = stored_ids.tolist()
-            elif isinstance(stored_ids, np.ndarray):
-                stored_ids = stored_ids.tolist()
-            
-            # Handle features based on type
-            if isinstance(features, pd.DataFrame):
-                result_df = features.loc[ids]
-            elif isinstance(features, (np.ndarray, list)):
-                df = pd.DataFrame(features, index=stored_ids)
-                result_df = df.loc[ids]
-            else:
-                raise TypeError(f"Unexpected feature type in list: {type(features)}")
-        else:
-            # Try converting to array
-            try:
-                arr = np.array(kmer_raw)
-                result_df = pd.DataFrame(arr, index=ids)
-            except ValueError:
-                # If conversion fails, features might be variable length
-                # Create DataFrame assuming ids match order
-                result_df = pd.DataFrame(kmer_raw, index=ids)
-    
-    else:
-        raise TypeError(f"Unexpected K-mer data type: {type(kmer_raw)}")
-    
-    feature_names = result_df.columns.tolist() if hasattr(result_df, 'columns') else list(range(result_df.shape[1]))
-    return result_df.values, feature_names
+    return np.array(feature_matrix), frequent_kmers
 
 
 def load_esm_data(path, master_labels):
@@ -435,12 +427,8 @@ def run_reproduce_prediction(train_dir: str,
                 
                 print(f"   Found {len(test_files)} test samples")
                 
-                # Load K-mer features for test
-                test_kmer_path = kmer_path.replace(dataset_name, f"test_dataset_{test_dataset_num}")
-                X_kmer_test, test_kmer_feature_names = load_kmer_features(test_kmer_path, test_files)
-                if X_kmer_test is None:
-                    print(f"   ⚠️  K-mer features not found: {test_kmer_path}")
-                    continue
+                # Compute K-mer features for test on-the-fly
+                X_kmer_test, test_kmer_feature_names = compute_kmers_on_fly(test_dir, test_files)
                 
                 # Align test features to match training features
                 test_df = pd.DataFrame(X_kmer_test, columns=test_kmer_feature_names, index=test_files)
@@ -572,12 +560,8 @@ def run_reproduce_prediction(train_dir: str,
                 
                 print(f"   Found {len(test_files)} test samples")
                 
-                # Load K-mer features for test
-                test_kmer_path = kmer_path.replace(dataset_name, f"test_dataset_{test_dataset_num}")
-                X_kmer_test, test_kmer_feature_names = load_kmer_features(test_kmer_path, test_files)
-                if X_kmer_test is None:
-                    print(f"   ⚠️  K-mer features not found: {test_kmer_path}")
-                    continue
+                # Compute K-mer features for test on-the-fly
+                X_kmer_test, test_kmer_feature_names = compute_kmers_on_fly(test_dir, test_files)
                 
                 # Align test features to match training features
                 test_df = pd.DataFrame(X_kmer_test, columns=test_kmer_feature_names, index=test_files)
@@ -718,11 +702,9 @@ def run_reproduce_prediction(train_dir: str,
         else:
             print("\n[2/7] Skipping ESM Grid Search (no ESM features found)")
         
-        # 3. Load K-mer features
-        print("\n[3/7] Loading K-mer Features...")
-        X_kmer, kmer_feature_names = load_kmer_features(kmer_path, ids_array)
-        if X_kmer is None:
-            raise ValueError("K-mer features are required but not found")
+        # 3. Compute K-mer features on-the-fly
+        print("\n[3/7] Computing K-mer Features...")
+        X_kmer, kmer_feature_names = compute_kmers_on_fly(train_dir, ids_array)
         print(f"   K-mer shape: {X_kmer.shape}")
         
         # Store feature names for test alignment
@@ -857,12 +839,8 @@ def run_reproduce_prediction(train_dir: str,
             
             print(f"   Found {len(test_files)} test samples")
             
-            # Load K-mer features for test
-            test_kmer_path = kmer_path.replace(dataset_name, f"test_dataset_{test_dataset_num}")
-            X_kmer_test, test_kmer_feature_names = load_kmer_features(test_kmer_path, test_files)
-            if X_kmer_test is None:
-                print(f"   ⚠️  K-mer features not found: {test_kmer_path}")
-                continue
+            # Compute K-mer features for test on-the-fly
+            X_kmer_test, test_kmer_feature_names = compute_kmers_on_fly(test_dir, test_files)
             
             # Align test features to match training features
             test_df = pd.DataFrame(X_kmer_test, columns=test_kmer_feature_names, index=test_files)
