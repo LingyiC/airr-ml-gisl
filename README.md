@@ -1,6 +1,6 @@
 # Ensemble AIRR Predictor - GISL Team 
 
-This repository provides a reproducible machine learning pipeline for AIRR-ML challenge (Rank 9).
+This repository provides a reproducible machine learning pipeline for AIRR-ML challenge (Rank 9th).
 The pipeline automatically selects the best-performing strategy based on dataset characteristics. 
 
 ## 📋 Overview
@@ -124,6 +124,8 @@ python3 -m submission.main \
 | `--no-reproduce`    | Skip Kaggle-specific reproduction logic                                     |
 | `--num_gpus`        | Number of GPUs for ESM (default: -1, all available GPUs)                   |
 | `--esm_batch_size`  | Batch size for ESM encoding (default: 128, auto-scaled with multiple GPUs) |
+| `--esm_model_name`  | ESM model to use (default: facebook/esm2_t6_8M_UR50D). Other options: esm2_t30_150M_UR50D, esm2_t33_650M_UR50D, esm2_t36_3B_UR50D |
+| `--esm_grid_models` | Models for ESM grid search (default: ExtraTrees_shallow, SVM_Linear). Options: LogReg_L1, LogReg_L2, LogReg_ElasticNet, SVM_Linear, SVM_RBF, RandomForest_shallow, ExtraTrees_shallow, GradientBoosting, AdaBoost, GaussianNB |
 
 
 

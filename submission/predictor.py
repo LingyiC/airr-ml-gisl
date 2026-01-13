@@ -10,7 +10,8 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
-from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
+from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import roc_auc_score
 from submission.utils import load_data_generator, get_repertoire_ids, load_full_dataset
 
@@ -123,6 +124,7 @@ class ImmuneStatePredictor:
         self.n_folds = 5
         self.model_selection_method = kwargs.get('model_selection_method', 'hybrid')  # 'cv', 'weights', or 'hybrid'
         self.rank_topseq = kwargs.get('rank_topseq', True)  # Whether to rank important sequences
+        self.esm_grid_models = kwargs.get('esm_grid_models', ["ExtraTrees_shallow", "SVM_Linear"])  # Models to use in ESM grid search
 
     def fit(self, train_dir_path: str):
         """
@@ -330,14 +332,34 @@ class ImmuneStatePredictor:
     
     def _get_ml_model(self, model_name):
         """Returns the ML classifier configuration."""
-        if model_name == "ExtraTrees_shallow":
-            return ExtraTreesClassifier(
-                n_estimators=300, 
-                max_depth=6, 
-                min_samples_leaf=5, 
-                n_jobs=1,  # Set to 1 for reproducibility
+        # Logistic Regression variants
+        if model_name == "LogReg_L1":
+            return LogisticRegression(
+                penalty="l1", 
+                solver="liblinear", 
+                C=1.0, 
+                max_iter=2000, 
                 random_state=self.seed
             )
+        elif model_name == "LogReg_L2":
+            return LogisticRegression(
+                penalty="l2", 
+                solver="lbfgs", 
+                C=1.0, 
+                max_iter=2000, 
+                random_state=self.seed
+            )
+        elif model_name == "LogReg_ElasticNet":
+            return LogisticRegression(
+                penalty="elasticnet", 
+                solver="saga", 
+                l1_ratio=0.5, 
+                C=1.0, 
+                max_iter=3000, 
+                random_state=self.seed
+            )
+        
+        # SVM variants
         elif model_name == "SVM_Linear":
             return SVC(
                 kernel="linear", 
@@ -345,12 +367,51 @@ class ImmuneStatePredictor:
                 probability=True, 
                 random_state=self.seed
             )
-        elif model_name == "SVC_rbf":
-            return SVC(kernel="rbf", 
-                       C=0.5, 
-                       gamma="scale", 
-                       probability=True, 
-                       random_state=self.seed)
+        elif model_name == "SVM_RBF" or model_name == "SVC_rbf":
+            return SVC(
+                kernel="rbf", 
+                C=1.0, 
+                gamma="scale", 
+                probability=True, 
+                random_state=self.seed
+            )
+        
+        # Tree Ensembles
+        elif model_name == "RandomForest_shallow":
+            return RandomForestClassifier(
+                n_estimators=300, 
+                max_depth=6, 
+                min_samples_leaf=5, 
+                n_jobs=1,  # Set to 1 for reproducibility
+                random_state=self.seed
+            )
+        elif model_name == "ExtraTrees_shallow":
+            return ExtraTreesClassifier(
+                n_estimators=300, 
+                max_depth=6, 
+                min_samples_leaf=5, 
+                n_jobs=1,  # Set to 1 for reproducibility
+                random_state=self.seed
+            )
+        elif model_name == "GradientBoosting":
+            return GradientBoostingClassifier(
+                n_estimators=200, 
+                learning_rate=0.05, 
+                max_depth=3, 
+                subsample=0.8, 
+                random_state=self.seed
+            )
+        elif model_name == "AdaBoost":
+            return AdaBoostClassifier(
+                n_estimators=200, 
+                learning_rate=0.1, 
+                random_state=self.seed
+            )
+        
+        # Naive Bayes
+        elif model_name == "GaussianNB":
+            return GaussianNB()
+        
         return None
     
     def _run_esm_grid_search(self, master_labels, dataset_name):
@@ -358,16 +419,21 @@ class ImmuneStatePredictor:
         # Define ESM variants
         agg_dir = self.esm_path
         
+        # Extract model identifier from esm_model_name
+        import re
+        match = re.search(r'esm2_([^_/]+_[^_/]+)', self.esm_model_name)
+        model_id = match.group(1) if match else "t6_8M"
+        
         # Bert [max, mean] x Row [mean, max, std, mean_std]
         esm_variants = {
-            "BertMax_RowMean": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_max/esm2_{dataset_name}_aggregated_mean.pkl"),
-            "BertMax_RowMax": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_max/esm2_{dataset_name}_aggregated_max.pkl"),
-            "BertMax_RowStd": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_max/esm2_{dataset_name}_aggregated_std.pkl"),
-            "BertMax_RowMeanStd": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_max/esm2_{dataset_name}_aggregated_mean_std.pkl"),
-            "BertMean_RowMean": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_mean/esm2_{dataset_name}_aggregated_mean.pkl"),
-            "BertMean_RowMax": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_mean/esm2_{dataset_name}_aggregated_max.pkl"),
-            "BertMean_RowStd": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_mean/esm2_{dataset_name}_aggregated_std.pkl"),
-            "BertMean_RowMeanStd": os.path.join(agg_dir, f"aggregated_esm2_t6_8M_mean/esm2_{dataset_name}_aggregated_mean_std.pkl")
+            "BertMax_RowMean": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_max/esm2_{dataset_name}_aggregated_mean.pkl"),
+            "BertMax_RowMax": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_max/esm2_{dataset_name}_aggregated_max.pkl"),
+            "BertMax_RowStd": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_max/esm2_{dataset_name}_aggregated_std.pkl"),
+            "BertMax_RowMeanStd": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_max/esm2_{dataset_name}_aggregated_mean_std.pkl"),
+            "BertMean_RowMean": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_mean/esm2_{dataset_name}_aggregated_mean.pkl"),
+            "BertMean_RowMax": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_mean/esm2_{dataset_name}_aggregated_max.pkl"),
+            "BertMean_RowStd": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_mean/esm2_{dataset_name}_aggregated_std.pkl"),
+            "BertMean_RowMeanStd": os.path.join(agg_dir, f"aggregated_esm2_{model_id}_mean/esm2_{dataset_name}_aggregated_mean_std.pkl")
         }
         
         results = []
@@ -377,7 +443,7 @@ class ImmuneStatePredictor:
             
             kf = StratifiedKFold(n_splits=self.n_folds, shuffle=True, random_state=self.seed)
             
-            for model_name in ["ExtraTrees_shallow", "SVM_Linear"]:
+            for model_name in self.esm_grid_models:
                 print(f"  Testing [{variant_name}] + [{model_name}] ... ", end="")
                 fold_aucs = []
                 
@@ -1037,6 +1103,11 @@ class ImmuneStatePredictor:
         
         dataset_name = os.path.basename(test_dir_path)
         
+        # Extract model identifier
+        import re
+        match = re.search(r'esm2_([^_/]+_[^_/]+)', self.esm_model_name)
+        model_id = match.group(1) if match else "t6_8M"
+        
         # Construct expected path
         if "BertMax" in self.best_esm_variant:
             bert_pool = "max"
@@ -1057,7 +1128,7 @@ class ImmuneStatePredictor:
         
         esm_test_path = os.path.join(
             self.esm_path,
-            f"aggregated_esm2_t6_8M_{bert_pool}",
+            f"aggregated_esm2_{model_id}_{bert_pool}",
             f"esm2_{dataset_name}_aggregated_{row_pool}.pkl"
         )
         

@@ -290,9 +290,15 @@ def aggregate_for_dataset(
             print(f"  {'-'*66}")
             
             # Construct output path
+            # Extract model identifier from representation directory name
+            # Default to t6_8M if not found
+            model_id = "t6_8M"
+            if hasattr(config, 'model_identifier'):
+                model_id = config.model_identifier
+            
             output_dir = os.path.join(
                 config.aggregate_out_dir,
-                f"aggregated_esm2_t6_8M_{bert_method}"
+                f"aggregated_esm2_{model_id}_{bert_method}"
             )
             os.makedirs(output_dir, exist_ok=True)
             

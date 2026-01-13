@@ -56,6 +56,16 @@ class RepresentationConfig:
     model_name = "facebook/esm2_t6_8M_UR50D"
     batch_size = 128
     pooling = ["mean", "max"]  # Options: 'cls', 'mean', 'max', list of methods, or 'all'
+    
+    @property
+    def model_identifier(self):
+        """Extract model identifier from model name (e.g., 't6_8M' from 'facebook/esm2_t6_8M_UR50D')."""
+        # Extract the part between 'esm2_' and '_UR' or end of string
+        import re
+        match = re.search(r'esm2_([^_/]+_[^_/]+)', self.model_name)
+        if match:
+            return match.group(1)
+        return "t6_8M"  # fallback default
 
     # Debug settings
     debug = False
