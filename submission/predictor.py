@@ -12,7 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import roc_auc_score
-from submission.utils import load_data_generator, get_repertoire_ids
+from submission.utils import load_data_generator, get_repertoire_ids, load_full_dataset
 
 
 class PublicCloneModel:
@@ -1147,56 +1147,104 @@ class ImmuneStatePredictor:
         print(f"  ✓ ESM features successfully generated!")
         return True
 
-    def identify_associated_sequences(self, dataset_name: str, top_k: int = 50000) -> pd.DataFrame:
+    # changed this one 
+    def score_all_sequences(self, sequences_df, sequence_col='junction_aa', 
+                           batch_size=500, k_list=[3, 4]):
         """
-        Identifies the top "k" important sequences (rows) from the training data that best explain the labels.
+        Score all sequences using model coefficients (vectorized, batched, memory-aware).
 
-        Args:
-            dataset_name (str): Name of the dataset
-            top_k (int): The number of top sequences to return (based on some scoring mechanism).
+        Parameters:
+            sequences_df: DataFrame with unique sequences
+            sequence_col: Column name containing sequences
+            batch_size: Number of sequences to process in each batch
+            k_list: List of k-mer sizes used in training
 
         Returns:
-            pd.DataFrame: A DataFrame with 'ID', 'dataset', 'label_positive_probability', 'junction_aa', 'v_call', 'j_call' columns.
+            DataFrame with added 'importance_score' column
         """
-        print(f"  Identifying top {top_k} important sequences...")
+        if self.kmer_model is None:
+            raise ValueError("Model not fitted.")
+
+        scaler = self.kmer_model.named_steps['scaler']
+        coefficients = self.kmer_model.named_steps['classifier'].coef_[0]
+        # Re-scale coefficients to reflect the unstandardized feature importance
+        coefficients = coefficients / scaler.scale_
+
+        kmer_to_index = {kmer: idx for idx, kmer in enumerate(self.kmer_model.feature_names_)}
+
+        scores = []
+        total_seqs = len(sequences_df)
+        sequences_list = sequences_df[sequence_col].tolist()
         
-        # Use the public clone model's selected sequences as important sequences
-        if self.public_model is not None and len(self.public_model.selected) > 0:
-            selected_seqs = self.public_model.selected[:top_k]
+        # Determine unique k-values used by the model features
+        k_values_used = set(len(kmer) for kmer in kmer_to_index.keys())
+        
+        # Process in batches for better performance and memory efficiency
+        for batch_start in tqdm(range(0, total_seqs, batch_size), desc="Scoring sequences (batched)"):
+            batch_end = min(batch_start + batch_size, total_seqs)
+            batch_scores = []
             
-            # Convert tuples back to columns
-            sequences_data = []
-            for seq_tuple in selected_seqs:
-                if isinstance(seq_tuple, tuple) and len(seq_tuple) == 3:
-                    sequences_data.append({
-                        'junction_aa': seq_tuple[0],
-                        'v_call': seq_tuple[1],
-                        'j_call': seq_tuple[2]
-                    })
-                else:
-                    sequences_data.append({
-                        'junction_aa': str(seq_tuple),
-                        'v_call': 'unknown',
-                        'j_call': 'unknown'
-                    })
+            for seq in sequences_list[batch_start:batch_end]:
+                counts = np.zeros(len(kmer_to_index), dtype=np.uint8)
+                # Extract all k-mers from sequence for all k-values used by the model
+                # MODIFIED: Use k_values_used derived from model's features
+                for k in k_values_used:
+                    for i in range(max(0, len(seq) - k + 1)):
+                        kmer = seq[i:i + k]
+                        if kmer in kmer_to_index:
+                            # Use binary presence (1) instead of count if L1 regularization implies this
+                            counts[kmer_to_index[kmer]] = 1 
+                batch_scores.append(np.dot(counts, coefficients))
             
-            top_sequences_df = pd.DataFrame(sequences_data)
-        else:
-            # Fallback: generate placeholder sequences
-            print("    Warning: No public sequences selected, using placeholder")
-            top_sequences_df = pd.DataFrame({
-                'junction_aa': [f'CASSXX{i}EQFF' for i in range(min(top_k, 1000))],
-                'v_call': ['TRBV1-1*01'] * min(top_k, 1000),
-                'j_call': ['TRBJ1-1*01'] * min(top_k, 1000)
-            })
-        
-        # Format output
-        top_sequences_df['dataset'] = dataset_name
-        top_sequences_df['ID'] = range(1, len(top_sequences_df) + 1)
-        top_sequences_df['ID'] = top_sequences_df['dataset'] + '_seq_top_' + top_sequences_df['ID'].astype(str)
-        top_sequences_df['label_positive_probability'] = -999.0
-        
-        top_sequences_df = top_sequences_df[['ID', 'dataset', 'label_positive_probability', 'junction_aa', 'v_call', 'j_call']]
-        
-        print(f"    Identified {len(top_sequences_df)} important sequences")
-        return top_sequences_df
+            scores.extend(batch_scores)
+            
+            # Periodic garbage collection
+            if (batch_start // batch_size) % 10 == 0:
+                gc.collect()
+         
+        result_df = sequences_df.copy()
+        result_df['importance_score'] = scores
+       
+        return result_df
+
+    def identify_associated_sequences(self, train_dir_path: str, top_k: int = 50000) -> pd.DataFrame:
+            """
+            Identifies the top k important sequences from the training data, ranked by importance score.
+
+            Args:
+                top_k (int): Number of top sequences to return
+                train_dir_path (str): Path to training directory
+
+            Returns:
+                pd.DataFrame: Top important sequences with scores, ranked by importance_score descending
+            """
+            print(f"\n[Sequence Identification] Identifying top {top_k} sequences...")
+            dataset_name = os.path.basename(train_dir_path)
+
+            # Load full dataset to get unique sequences
+            full_df = load_full_dataset(train_dir_path)
+            unique_seqs = full_df[['junction_aa', 'v_call', 'j_call']].drop_duplicates().reset_index(drop=True)
+            
+            print(f"[Sequence Identification] Scoring {len(unique_seqs)} unique sequences...")
+
+            # Determine k-values used by the fitted model features for scoring sequences
+            k_values_for_scoring = set(len(kmer) for kmer in self.kmer_feature_names)
+            
+            all_sequences_scored = self.score_all_sequences(
+                unique_seqs, 
+                sequence_col='junction_aa',
+                batch_size=500,
+                k_list=list(k_values_for_scoring) # Pass the list of k-values used by the model
+            )
+
+            top_sequences_df = all_sequences_scored.nlargest(top_k, 'importance_score')
+            top_sequences_df = top_sequences_df[['junction_aa', 'v_call', 'j_call']]
+            top_sequences_df['dataset'] = dataset_name
+            top_sequences_df['ID'] = range(1, len(top_sequences_df)+1)
+            top_sequences_df['ID'] = top_sequences_df['dataset'] + '_seq_top_' + top_sequences_df['ID'].astype(str)
+            top_sequences_df['label_positive_probability'] = -999.0# to enable compatibility with the expected output format
+            top_sequences_df = top_sequences_df[['ID', 'dataset', 'label_positive_probability', 'junction_aa', 'v_call', 'j_call']]
+            
+            print(f"[Sequence Identification] Identified {len(top_sequences_df)} top sequences ranked by importance score.")
+            # MemoryMonitor.log_memory("After sequence identification") # Assuming MemoryMonitor is defined elsewhere
+            return top_sequences_df
