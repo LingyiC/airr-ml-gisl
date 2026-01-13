@@ -71,7 +71,7 @@ class ImmuneStatePredictor:
     Ensemble predictor combining K-mer features, Public Clones, and ESM2 embeddings.
     """
 
-    def __init__(self, n_jobs: int = 1, device: str = 'cpu', use_esm: bool = True, **kwargs):
+    def __init__(self, n_jobs: int = 1, device: str = 'cpu', use_esm: bool = True, top_n_models: int = 2, **kwargs):
         """
         Initializes the predictor.
 
@@ -79,6 +79,7 @@ class ImmuneStatePredictor:
             n_jobs (int): Number of CPU cores to use for parallel processing.
             device (str): The device to use for computation (e.g., 'cpu', 'cuda').
             use_esm (bool): Whether to use ESM features (default: True). Set to False to skip ESM model entirely.
+            top_n_models (int): Number of top models to use for experimental data ensemble (default: 2).
             **kwargs: Additional hyperparameters for the model.
         """
         total_cores = os.cpu_count()
@@ -88,6 +89,7 @@ class ImmuneStatePredictor:
             self.n_jobs = min(n_jobs, total_cores)
         self.device = device
         self.use_esm = use_esm
+        self.top_n_models = top_n_models
         
         # Model components
         self.kmer_model = None
@@ -727,8 +729,8 @@ class ImmuneStatePredictor:
                 print()
         
         else:
-            # EXPERIMENTAL: Use Top-2 Positive strategy
-            print(f"\n  Dataset Type: EXPERIMENTAL - Using Top-2 Positive Strategy")
+            # EXPERIMENTAL: Use Top-N Positive strategy
+            print(f"\n  Dataset Type: EXPERIMENTAL - Using Top-{self.top_n_models} Positive Strategy")
             
             # Filter models with positive weights
             positive_mask = weights > 0
@@ -753,20 +755,21 @@ class ImmuneStatePredictor:
                 print(f"  Selected Model: {model_names[pos_idx]} (weight={weights[pos_idx]:.3f}, CV AUC={individual_aucs[pos_idx]:.5f})")
                 
             else:
-                # Select Top 2 models with highest positive weights
+                # Select Top N models with highest positive weights
                 positive_indices = np.where(positive_mask)[0]
                 positive_weights = weights[positive_mask]
                 
-                # Sort by weight and take top 2
+                # Sort by weight and take top N (limited by number of positive models)
                 sorted_indices = positive_indices[np.argsort(positive_weights)[::-1]]
-                top2_indices = sorted_indices[:2]
+                n_to_select = min(self.top_n_models, len(sorted_indices))
+                topn_indices = sorted_indices[:n_to_select]
                 
                 # Renormalize weights to sum to 1.0
-                top2_weights = weights[top2_indices]
-                simplified_weights[top2_indices] = top2_weights / top2_weights.sum()
+                topn_weights = weights[topn_indices]
+                simplified_weights[topn_indices] = topn_weights / topn_weights.sum()
                 
-                print(f"  Strategy: Top 2 Positive Models")
-                for idx in top2_indices:
+                print(f"  Strategy: Top {n_to_select} Positive Models")
+                for idx in topn_indices:
                     print(f"    {model_names[idx]}: weight={simplified_weights[idx]:.3f} (original={weights[idx]:.3f}, CV AUC={individual_aucs[idx]:.5f})")
             
             # Show excluded models

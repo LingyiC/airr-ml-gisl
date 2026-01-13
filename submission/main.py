@@ -341,7 +341,7 @@ def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str
     print(f"\n✅ Feature generation complete for {dataset_name}\n")
 
 
-def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True, use_esm: bool = True) -> None:
+def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True, use_esm: bool = True, top_n_models: int = 2) -> None:
     validate_dirs_and_files(train_dir, test_dirs, out_dir)
     
     # Ensure representations and aggregations exist for all datasets
@@ -413,6 +413,7 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
                                      device=device,
                                      out_dir=out_dir,
                                      use_esm=use_esm,
+                                     top_n_models=top_n_models,
                                      rank_topseq=topseq)  # instantiate with any other parameters as defined by you in the class
     _train_predictor(predictor, train_dir)
     predictions = _generate_predictions(predictor, test_dirs)
@@ -430,6 +431,8 @@ def run():
                         help="Number of CPU cores to use. Use -1 for all available cores.")
     parser.add_argument("--device", type=str, default='cpu', choices=['cpu', 'cuda'],
                         help="Device to use for computation ('cpu' or 'cuda').")
+    parser.add_argument("--top_n_models", type=int, default=2,
+                        help="Number of top models to use for experimental data ensemble (default: 2)")
     parser.add_argument("--no-topseq", dest='topseq', action='store_false', default=True,
                         help="Disable ranking of important sequences (faster training)")
     parser.add_argument("--no-esm", dest='use_esm', action='store_false', default=True,
@@ -437,7 +440,7 @@ def run():
     parser.add_argument("--no-reproduce", dest='use_reproduce', action='store_false', default=True,
                         help="Skip checking for kaggle reproduce scripts and always retrain)")
     args = parser.parse_args()
-    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce, args.use_esm)
+    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce, args.use_esm, args.top_n_models)
 
 
 if __name__ == "__main__":
