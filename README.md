@@ -177,6 +177,3 @@ docker run --rm \
 
 * **Team GISL** from Columbia University
 
-## 📖 Citation
-
-If you use this pipeline in your research, please cite:
