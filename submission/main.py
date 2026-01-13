@@ -283,7 +283,7 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
         print(f"✅ Successfully removed {removed_count} files")
 
 
-def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str, use_esm: bool = True) -> None:
+def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str, use_esm: bool = True, num_gpus: int = -1, esm_batch_size: int = 128) -> None:
     """Ensure representations and aggregations exist for a dataset."""
     dataset_name = os.path.basename(data_dir)
     
@@ -299,6 +299,10 @@ def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str
     # Setup config with the correct output directory
     rep_config = RepresentationConfig()
     rep_config.representation_out_dir = os.path.join(out_dir, "representations")
+    rep_config.num_gpus = num_gpus
+    rep_config.batch_size = esm_batch_size
+    rep_config.num_gpus = num_gpus
+    rep_config.batch_size = esm_batch_size
     
     agg_config = AggregateConfig()
     agg_config.representation_dir = os.path.join(out_dir, "representations")
@@ -341,7 +345,7 @@ def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str
     print(f"\n✅ Feature generation complete for {dataset_name}\n")
 
 
-def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True, use_esm: bool = True, top_n_models: int = 2) -> None:
+def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device: str, topseq: bool = True, use_reproduce: bool = True, use_esm: bool = True, top_n_models: int = 2, num_gpus: int = -1, esm_batch_size: int = 128) -> None:
     validate_dirs_and_files(train_dir, test_dirs, out_dir)
     
     # Ensure representations and aggregations exist for all datasets
@@ -350,11 +354,11 @@ def main(train_dir: str, test_dirs: List[str], out_dir: str, n_jobs: int, device
     print("="*70)
     
     # Check train dataset
-    _ensure_representations_exist(train_dir, "train", out_dir, use_esm)
+    _ensure_representations_exist(train_dir, "train", out_dir, use_esm, num_gpus, esm_batch_size)
     
     # Check test datasets
     for test_dir in test_dirs:
-        _ensure_representations_exist(test_dir, "test", out_dir, use_esm)
+        _ensure_representations_exist(test_dir, "test", out_dir, use_esm, num_gpus, esm_batch_size)
     
     # Check for reproducibility - if input matches a known Kaggle dataset
     if use_reproduce:
@@ -439,8 +443,12 @@ def run():
                         help="Disable ESM features (skip ESM generation and usage, faster training)")
     parser.add_argument("--no-reproduce", dest='use_reproduce', action='store_false', default=True,
                         help="Skip checking for kaggle reproduce scripts and always retrain)")
+    parser.add_argument("--num_gpus", type=int, default=-1,
+                        help="Number of GPUs to use for ESM representation generation (1=single GPU, -1=all available GPUs, >1=specific number)")
+    parser.add_argument("--esm_batch_size", type=int, default=128,
+                        help="Batch size for ESM encoding (will be scaled by num_gpus if using multiple GPUs)")
     args = parser.parse_args()
-    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce, args.use_esm, args.top_n_models)
+    main(args.train_dir, args.test_dirs, args.out_dir, args.n_jobs, args.device, args.topseq, args.use_reproduce, args.use_esm, args.top_n_models, args.num_gpus, args.esm_batch_size)
 
 
 if __name__ == "__main__":

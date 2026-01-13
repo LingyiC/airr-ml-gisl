@@ -64,6 +64,7 @@ class RepresentationConfig:
 
     # Runtime
     device = "cuda"
+    num_gpus = -1  # Number of GPUs to use (1 = single GPU, >1 = DataParallel multi-GPU, -1 = all available GPUs)
     seed = 42
 
 
@@ -151,7 +152,7 @@ def save_representations(dataset_name: str, rep_id: str, embeddings, output_dir:
 class PretrainedEncoder(torch.nn.Module):
     """ESM2 encoder with multiple pooling strategies."""
     
-    def __init__(self, model_name="facebook/esm2_t6_8M_UR50D", batch_size=32, pooling="cls"):
+    def __init__(self, model_name="facebook/esm2_t6_8M_UR50D", batch_size=32, pooling="cls", num_gpus=1):
         super().__init__()
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError("Transformers library not found.")
@@ -167,6 +168,7 @@ class PretrainedEncoder(torch.nn.Module):
         self.fc = nn.Linear(hidden_size, 128)
         self.norm = nn.LayerNorm(128)
         self.batch_size = batch_size
+        self.num_gpus = num_gpus
 
         # Validate pooling
         if isinstance(pooling, str):
@@ -183,6 +185,18 @@ class PretrainedEncoder(torch.nn.Module):
             raise ValueError(f"pooling must be a string or list, got {type(pooling)}")
 
         print(f"✅ Encoder configured with {pooling} pooling, output dimension: {hidden_size}D")
+        
+        # Multi-GPU setup
+        if num_gpus > 1 or num_gpus == -1:
+            gpu_count = torch.cuda.device_count()
+            if num_gpus == -1:
+                num_gpus = gpu_count
+            if gpu_count > 1:
+                print(f"🔥 Using DataParallel with {min(num_gpus, gpu_count)} GPUs")
+                self.pretrained_model = nn.DataParallel(self.pretrained_model, device_ids=list(range(min(num_gpus, gpu_count))))
+                self.batch_size = batch_size * min(num_gpus, gpu_count)  # Scale batch size with number of GPUs
+            else:
+                print(f"⚠️  Only 1 GPU available, using single GPU mode")
 
     def forward(self, sequences: list):
         """
@@ -277,7 +291,8 @@ class RepresentationExtractor:
         encoder = PretrainedEncoder(
             model_name=self.cfg.model_name,
             batch_size=self.cfg.batch_size,
-            pooling=self.cfg.pooling
+            pooling=self.cfg.pooling,
+            num_gpus=self.cfg.num_gpus
         ).to(self.device)
         encoder.eval()
         return encoder
