@@ -66,11 +66,16 @@ def load_data_generator(data_dir: str, metadata_filename='metadata.csv') -> Iter
 
     if os.path.exists(metadata_path):
         metadata_df = pd.read_csv(metadata_path)
+        has_labels = 'label_positive' in metadata_df.columns
+        
         for row in metadata_df.itertuples(index=False):
             file_path = os.path.join(data_dir, row.filename)
             try:
                 repertoire_df = pd.read_csv(file_path, sep='\t')
-                yield row.repertoire_id, repertoire_df, row.label_positive
+                if has_labels:
+                    yield row.repertoire_id, repertoire_df, row.label_positive
+                else:
+                    yield row.repertoire_id, repertoire_df
             except FileNotFoundError:
                 print(f"Warning: File '{row.filename}' listed in metadata not found. Skipping.")
                 continue
@@ -181,6 +186,9 @@ def load_and_extract_all_features(data_dir: str, k_lengths: List[int] = [3, 4]) 
 
     # --- COMBINE ALL FEATURES ---
     kmer_df = pd.DataFrame(all_kmer_features).fillna(0).set_index('ID')
+    
+    # Sort by index to ensure consistent ordering
+    kmer_df = kmer_df.sort_index()
     
     # Join all features on the repertoire ID (index)
     combined_features_df = pd.concat([kmer_df], axis=1, join='outer').fillna(0)

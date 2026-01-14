@@ -150,9 +150,15 @@ def load_and_aggregate_train_dataset(
     X = np.stack(repertoire_features)
     y = df_labels.loc[valid_ids, "label"].values
 
+    # Sort by ID to ensure consistent ordering
+    sort_indices = np.argsort(valid_ids)
+    valid_ids = [valid_ids[i] for i in sort_indices]
+    X = X[sort_indices]
+    y = y[sort_indices]
+
     print(f"  -> Aggregation complete: {X.shape[0]} samples")
     print(f"  -> Feature matrix shape: {X.shape}")
-    print(f"  -> Repertoire ID order: {valid_ids[:3]}... (first 3)")
+    print(f"  -> Repertoire ID order (sorted): {valid_ids[:3]}... (first 3)")
 
     return X, y, npz_files_to_remove, valid_ids
 
@@ -218,6 +224,12 @@ def load_test_dataset_embeddings(
     
     if len(sample_embeddings) == 0:
         raise RuntimeError("No ESM2 feature files loaded. Check your directory and filenames.")
+    
+    # Sort by ID to ensure consistent ordering
+    sort_indices = np.argsort(valid_ids)
+    valid_ids = [valid_ids[i] for i in sort_indices]
+    sample_embeddings = [sample_embeddings[i] for i in sort_indices]
+    npz_files_to_remove = [npz_files_to_remove[i] for i in sort_indices] if npz_files_to_remove else []
     
     X = np.stack(sample_embeddings)
     

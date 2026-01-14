@@ -502,6 +502,8 @@ class ImmuneStatePredictor:
             df = pd.DataFrame(data, index=master_labels.index)
         
         common_ids = master_labels.index.intersection(df.index)
+        # Sort common_ids to ensure consistent ordering
+        common_ids = sorted(common_ids)
         X = df.loc[common_ids].values
         y = master_labels.loc[common_ids].values
         
@@ -531,11 +533,11 @@ class ImmuneStatePredictor:
             
             # If features is a DataFrame
             if isinstance(features, pd.DataFrame):
-                result_df = features.loc[ids]
+                result_df = features.reindex(ids, fill_value=0)
             # If features is array-like, create DataFrame with IDs
             elif isinstance(features, (np.ndarray, list)):
                 df = pd.DataFrame(features, index=stored_ids)
-                result_df = df.loc[ids]
+                result_df = df.reindex(ids, fill_value=0)
             else:
                 raise TypeError(f"Unexpected feature type in tuple: {type(features)}")
         
@@ -543,7 +545,7 @@ class ImmuneStatePredictor:
         elif isinstance(kmer_raw, tuple) and len(kmer_raw) == 1:
             kmer_raw = kmer_raw[0]
             if isinstance(kmer_raw, pd.DataFrame):
-                result_df = kmer_raw.loc[ids]
+                result_df = kmer_raw.reindex(ids, fill_value=0)
             elif isinstance(kmer_raw, np.ndarray):
                 result_df = pd.DataFrame(kmer_raw, index=ids)
             else:
@@ -551,7 +553,8 @@ class ImmuneStatePredictor:
         
         # Direct DataFrame
         elif isinstance(kmer_raw, pd.DataFrame):
-            result_df = kmer_raw.loc[ids]
+            # Align by index and ensure same order as ids
+            result_df = kmer_raw.reindex(ids, fill_value=0)
         
         # Direct array (assume same order as ids)
         elif isinstance(kmer_raw, np.ndarray):
