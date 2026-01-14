@@ -640,6 +640,9 @@ class ImmuneStatePredictor:
     
     def _train_ensemble(self, X_kmer, seqs_dict, X_esm, y, ids_array):
         """Train the ensemble with stacking and K-mer C optimization."""
+        # Ensure ids_array is a numpy array for proper indexing
+        ids_array = np.array(ids_array)
+        
         kf = StratifiedKFold(n_splits=self.n_folds, shuffle=True, random_state=self.seed)
         
         # Grid search for best K-mer C value
