@@ -163,11 +163,14 @@ def load_and_extract_all_features(data_dir: str, k_lengths: List[int] = [3, 4]) 
     # Iterate through all repertoires once
     for idx, item in enumerate(tqdm(data_loader_source, total=total_files, desc="Extracting all features")):
         
-        if os.path.exists(metadata_path):
+        # Unpack item - could be 2 or 3 elements depending on whether labels exist
+        if len(item) == 3:
             rep_id, data_df, label = item
-        else:
+        elif len(item) == 2:
             rep_id, data_df = item
             label = None
+        else:
+            raise ValueError(f"Unexpected item length: {len(item)}")
         
         # --- K-MER FEATURES ---
         rep_kmer_features = {'ID': rep_id}
