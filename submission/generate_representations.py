@@ -49,9 +49,6 @@ class RepresentationConfig:
     test_dirs = None  # Set via arguments
     representation_out_dir = None  # Set via arguments
 
-    # Data selection
-    target_ids = [1, 2, 3, 4, 5, 7, 8]
-
     # Model settings
     model_name = "facebook/esm2_t6_8M_UR50D"
     batch_size = 128
@@ -416,35 +413,20 @@ if __name__ == "__main__":
     # Process training datasets
     train_folders = sorted(glob.glob(os.path.join(args.train_dir, "train_dataset_*")))
     
-    filtered_train_folders = []
-    for f in train_folders:
-        try:
-            curr_id = int(os.path.basename(f).split('_')[-1])
-            if curr_id in args.target_ids:
-                filtered_train_folders.append(f)
-        except ValueError:
-            continue
-    train_folders = filtered_train_folders
-    
-    print(f"🎯 Targeted TRAIN Datasets: {[os.path.basename(f) for f in train_folders]}")
+    print(f"🎯 Processing TRAIN Datasets: {[os.path.basename(f) for f in train_folders]}")
 
     for train_path in train_folders:
         extractor.extract_representations(train_path, is_test=False)
 
     # Process test datasets
     test_folders = []
-    for target_id in args.target_ids:
-        suffix = str(target_id)
-        dataset_base_name = f"test_dataset_{suffix}"
-        
-        for td in args.test_dirs:
-            potential_sub_dirs = glob.glob(os.path.join(td, f"{dataset_base_name}_*"))
-            base_dir = os.path.join(td, dataset_base_name)
-            if os.path.isdir(base_dir):
-                test_folders.append(base_dir)
-            test_folders.extend(potential_sub_dirs)
+    for td in args.test_dirs:
+        # Find all test_dataset_* directories
+        test_dirs_pattern = glob.glob(os.path.join(td, "test_dataset_*"))
+        test_folders.extend([f for f in test_dirs_pattern if os.path.isdir(f)])
     
-    print(f"\n🎯 Targeted TEST Datasets: {[os.path.basename(f) for f in test_folders]}")
+    test_folders = sorted(test_folders)
+    print(f"\n🎯 Processing TEST Datasets: {[os.path.basename(f) for f in test_folders]}")
     
     for test_path in test_folders:
         extractor.extract_representations(test_path, is_test=True)

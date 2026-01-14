@@ -9,6 +9,7 @@ import numpy as np
 import subprocess
 import sys
 import glob
+import pickle
 from typing import List
 from submission.predictor import ImmuneStatePredictor
 from submission.utils import save_tsv, validate_dirs_and_files
@@ -63,8 +64,6 @@ def _save_important_sequences(predictor: ImmuneStatePredictor, out_dir: str, tra
 
 def _save_model(predictor: ImmuneStatePredictor, out_dir: str, train_dir: str) -> None:
     """Saves the trained ensemble model to a pickle file."""
-    import pickle
-    
     model_path = os.path.join(out_dir, f"{os.path.basename(train_dir)}_ensemble_model.pkl")
     with open(model_path, 'wb') as f:
         pickle.dump(predictor, f)
@@ -91,7 +90,6 @@ def _generate_representations_direct(data_dir: str, dataset_type: str, config: R
 def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_type: str, config: AggregateConfig):
     """Aggregate representations using the actual data directory path."""
     from submission.aggregate_representations import apply_pooling
-    import pickle
     
     features_dir = os.path.join(config.representation_dir, dataset_name)
     
@@ -112,6 +110,10 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
     
     # Collect all npz files to remove (only after ALL aggregations are done)
     all_npz_files_to_remove = set()
+    
+    # Track successful aggregations in this run
+    successful_aggregates = []
+    expected_aggregates = []
     
     # Process each combination of BERT pooling and row pooling
     for bert_method in config.bert_pooling_methods:
@@ -138,8 +140,19 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
             
             print(f"  Output File: {output_path}")
             
+            # Track this as an expected aggregate
+            expected_aggregates.append(output_path)
+            
             if os.path.exists(output_path):
                 print(f"  ⏭️  Skipping: Output file already exists")
+                # Verify the file is valid
+                try:
+                    with open(output_path, "rb") as f:
+                        pickle.load(f)
+                    successful_aggregates.append(output_path)
+                except Exception as e:
+                    print(f"  ⚠️  Warning: Existing file appears corrupted, will regenerate: {e}")
+                    os.remove(output_path)
                 continue
             
             try:
@@ -208,17 +221,19 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
                     output_data = (X_features, y_labels)
                     
                 else:  # test
-                    if dataset_num is not None:
+                    if dataset_num is not None and config.sample_submissions_path is not None:
                         # Standard test dataset with sample_submissions.csv
                         from submission.aggregate_representations import load_test_dataset_embeddings
-                        X_features, sample_ids = load_test_dataset_embeddings(
+                        X_features, sample_ids, npz_files = load_test_dataset_embeddings(
                             config.sample_submissions_path,
                             dataset_num,
                             features_dir,
                             embedding_key,
                             row_pooling_method,
-                            remove_npz=True
+                            collect_npz_files=True
                         )
+                        # Collect files for removal after all aggregations
+                        all_npz_files_to_remove.update(npz_files)
                     else:
                         # Custom test dataset - load all .npz files
                         print(f"    Loading custom test dataset (no sample_submissions.csv)...")
@@ -260,17 +275,28 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
                 with open(output_path, "wb") as f:
                     pickle.dump(output_data, f)
                 
-                print(f"    -> Saving complete!")
+                # Verify the saved file is valid
+                try:
+                    with open(output_path, "rb") as f:
+                        pickle.load(f)
+                    print(f"    -> Saving complete and verified!")
+                    successful_aggregates.append(output_path)
+                except Exception as e:
+                    print(f"    ❌ Error: Saved file verification failed: {e}")
+                    raise RuntimeError(f"Failed to verify saved aggregate: {output_path}")
                 
             except Exception as e:
                 print(f"    ❌ Error during aggregation: {e}")
                 raise
     
-    # Now remove all npz files after ALL aggregations are complete
-    if all_npz_files_to_remove:
+    # Only remove npz files if ALL expected aggregates were successfully created
+    all_aggregates_successful = (len(successful_aggregates) == len(expected_aggregates))
+    
+    if all_npz_files_to_remove and all_aggregates_successful:
         print(f"\n{'='*70}")
         print(f"Cleaning up raw representation files...")
         print(f"{'='*70}")
+        print(f"✅ All {len(expected_aggregates)} aggregates successfully created")
         print(f"Removing {len(all_npz_files_to_remove)} raw npz files...")
         removed_count = 0
         for npz_file in all_npz_files_to_remove:
@@ -281,6 +307,15 @@ def _aggregate_representations_direct(data_dir: str, dataset_name: str, dataset_
             except Exception as e:
                 print(f"  Warning: Could not remove {npz_file}: {e}")
         print(f"✅ Successfully removed {removed_count} files")
+    elif all_npz_files_to_remove:
+        print(f"\n{'='*70}")
+        print(f"⚠️  Keeping npz files - not all aggregates completed successfully")
+        print(f"{'='*70}")
+        print(f"Expected {len(expected_aggregates)} aggregates, got {len(successful_aggregates)} successful")
+        print(f"Keeping {len(all_npz_files_to_remove)} npz files for potential reuse")
+        print(f"Tip: Rerun to complete remaining aggregates, then npz files will be cleaned up")
+    else:
+        print(f"\n✅ No npz files to remove (all previously cleaned up or not generated)")
 
 
 def _ensure_representations_exist(data_dir: str, dataset_type: str, out_dir: str, use_esm: bool = True, num_gpus: int = -1, esm_batch_size: int = 128) -> None:
