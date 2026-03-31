@@ -737,7 +737,7 @@ class KmerClassifier:
 
         except ImportError:
             pass
-
+        """
         try:
             from concurrent.futures import ProcessPoolExecutor
             import multiprocessing as mp
@@ -781,7 +781,7 @@ class KmerClassifier:
 
         except ImportError:
             pass
-
+        """
         scores = []
 
         for batch_start in tqdm(
